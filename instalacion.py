@@ -376,7 +376,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.0.6",
+    version="1.0.7",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
 )
