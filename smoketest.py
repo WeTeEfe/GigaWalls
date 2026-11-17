@@ -1,0 +1,164 @@
+"""Prueba completa de GigaWalls antes de publicar (main.py --smoketest informe.txt).
+
+Abre la ventana de verdad (sin tocar el fondo de escritorio ni los ajustes guardados), hace búsquedas
+reales, carga más páginas, espera miniaturas, baja una vista previa, abre la biblioteca y revisa que
+el indicador de "Buscando" aparezca y desaparezca. Funciona igual desde el código y desde el .exe,
+así también detecta lo que falte en el empaquetado. Devuelve 0 si todo pasó.
+"""
+import os
+import time
+import traceback
+
+from PySide6.QtCore import QEventLoop, QTimer
+
+
+def _esperar(cond, segundos):
+    """Procesa eventos de Qt hasta que cond() sea verdadero o se acabe el tiempo."""
+    fin = time.monotonic() + segundos
+    while time.monotonic() < fin:
+        if cond():
+            return True
+        loop = QEventLoop()
+        QTimer.singleShot(100, loop.quit)
+        loop.exec()
+    return cond()
+
+
+def run(main, out_path):
+    lineas, fallos = [], 0
+
+    def check(nombre, fn, fatal=True):
+        nonlocal fallos
+        try:
+            lineas.append(f"OK     {nombre}: {fn()}")
+        except Exception as e:  # noqa: BLE001
+            if fatal:
+                fallos += 1
+            marca = "FALLA " if fatal else "AVISO "
+            lineas.append(f"{marca} {nombre}: {type(e).__name__}: {e}")
+            if fatal:
+                lineas.append("       " + traceback.format_exc().strip().replace("\n", "\n       "))
+
+    # Nada de lo que haga la prueba se guarda en el settings.json del usuario
+    main.save_settings = lambda _data: None
+
+    # 1) Lo que ya revisaba --selftest (ffmpeg, opencv, certificados, iconos...)
+    tmp = out_path + ".selftest"
+
+    def selftest():
+        code = main.selftest(tmp)
+        with open(tmp, encoding="utf-8") as f:
+            texto = f.read()
+        os.remove(tmp)
+        if code:
+            raise RuntimeError(texto.replace("\n", " | "))
+        return "todo presente"
+    check("dependencias (selftest)", selftest)
+
+    # 2) La ventana se construye y la primera búsqueda arranca sin errores
+    state = {}
+
+    def ventana():
+        wallpaper = main.DesktopWallpaper()
+        state["win"] = win = main.MainWindow(wallpaper, {})
+        win.show()
+        return "construida"
+    check("abrir ventana", ventana)
+    win = state.get("win")
+    if win is None:
+        return _guardar(out_path, lineas, fallos)
+
+    def indicador_visible():
+        if not win.busy_spin.isVisibleTo(win) or not win.busy_label.text():
+            raise RuntimeError("no se ve el indicador de búsqueda mientras busca")
+        return win.busy_label.text()
+
+    def busqueda(texto, minimo=1):
+        def fn():
+            win.search_box.setText(texto)
+            win.search(texto)
+            estado = indicador_visible()
+            if not _esperar(lambda: not win.loading, 60):
+                raise TimeoutError("la búsqueda no terminó en 60 s")
+            if win.results.count() < minimo:
+                raise RuntimeError(f"solo {win.results.count()} resultados (status: {win.status.currentMessage()})")
+            if not _esperar(lambda: not win.busy_spin.isVisibleTo(win) or win.loading, 5):
+                raise RuntimeError("el indicador de búsqueda no se ocultó al terminar")
+            return f"{win.results.count()} resultados  ·  mientras buscaba: «{estado}»"
+        return fn
+
+    check("catálogo inicial (lo más nuevo)", busqueda(""))
+    check("búsqueda en español traducida", busqueda("atardecer en la playa"))
+    check("búsqueda de anime", busqueda("naruto"))
+
+    def mas_paginas():
+        antes, pagina = win.results.count(), win.page
+        win.exhausted = False
+        win.load_more()
+        if not _esperar(lambda: not win.loading, 60):
+            raise TimeoutError("la página siguiente no llegó en 60 s")
+        if win.page <= pagina and not win.exhausted:
+            raise RuntimeError("no avanzó de página")
+        return f"página {win.page}: {antes} → {win.results.count()} resultados"
+    check("cargar más páginas", mas_paginas)
+
+    def miniaturas():
+        def con_imagen():
+            return sum(1 for i in range(win.results.count()) if not win.results.item(i).icon().isNull())
+        _esperar(lambda: con_imagen() >= min(6, win.results.count()), 40)
+        n = con_imagen()
+        if n == 0:
+            raise RuntimeError("no llegó ninguna miniatura en 40 s")
+        return f"{n} de {win.results.count()} con imagen"
+    check("miniaturas", miniaturas)
+
+    def vista_previa():
+        from PySide6.QtCore import Qt
+        info = win.results.item(0).data(Qt.UserRole)
+        path = main.fetch_preview(info)
+        size = os.path.getsize(path)
+        if size < 10_000:
+            raise RuntimeError(f"archivo de vista previa muy chico ({size} bytes)")
+        return f"{info['source']}: {size // 1024} KB"
+    check("descargar vista previa", vista_previa)
+
+    # 3) Cada origen por separado: si uno se cae se avisa, pero no frena la publicación
+    for nombre, modulo in main.SOURCES.items():
+        def origen(modulo=modulo):
+            items = modulo.search("nature", 1)
+            if not items:
+                raise RuntimeError("0 resultados")
+            return f"{len(items)} resultados"
+        check(f"origen {nombre}", origen, fatal=False)
+
+    def sin_resultados():
+        win.search("zzqxjvwk qqzzxx")
+        _esperar(lambda: not win.loading, 60)
+        if win.busy_spin.isVisibleTo(win):
+            raise RuntimeError("el indicador sigue girando sin resultados")
+        return f"{win.results.count()} resultados, indicador oculto"
+    check("búsqueda sin resultados", sin_resultados, fatal=False)
+
+    def biblioteca():
+        win._goto_page(1)
+        _esperar(lambda: False, 1)
+        win._goto_page(0)
+        return f"{win.library.count()} videos en la biblioteca"
+    check("abrir biblioteca", biblioteca)
+
+    win.tray.hide()
+    win.hide()
+    win._gen += 1  # que las miniaturas que sigan llegando se descarten
+    # Salir con hilos de descarga vivos hace que Windows corte el proceso con 0xC0000005
+    win.pool.clear()
+    win.pool.waitForDone(30000)
+    win.wallpaper.stop()
+    win.deleteLater()
+    _esperar(lambda: False, 0.5)
+    return _guardar(out_path, lineas, fallos)
+
+
+def _guardar(out_path, lineas, fallos):
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lineas) + f"\nRESULTADO: {'TODO OK' if not fallos else f'{fallos} FALLO(S)'}\n")
+    return 0 if not fallos else 1

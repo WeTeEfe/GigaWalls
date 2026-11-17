@@ -1560,6 +1560,10 @@ def main():
     if "--selftest" in sys.argv:
         args = sys.argv[sys.argv.index("--selftest") + 1:]
         sys.exit(selftest(args[0], args[1] if len(args) > 1 else None))
+    if "--smoketest" in sys.argv:  # prueba completa antes de publicar (ver smoketest.py / release.bat)
+        import smoketest
+        app.setStyleSheet(STYLE)
+        os._exit(smoketest.run(sys.modules[__name__], sys.argv[sys.argv.index("--smoketest") + 1]))
     app.setWindowIcon(QIcon(ICON_PATH))
     if "--desinstalar" in sys.argv:  # desde «Aplicaciones instaladas» de Windows
         INSTALACION.desinstalar(f"Los videos de tu biblioteca ({LIBRARY}) no se borran.")
