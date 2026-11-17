@@ -43,22 +43,102 @@ def _version(texto):
         return (0,)
 
 
-def _caja(icono, titulo, texto, detalle, botones):
-    """Cuadro de mensaje con botones personalizados. Devuelve el texto del botón elegido."""
-    from PySide6.QtWidgets import QMessageBox
-    m = QMessageBox()
-    m.setIcon(icono)
-    m.setWindowTitle(titulo)
-    m.setText(texto)
-    m.setInformativeText(detalle)
-    primero = None
-    for i, (t, rol) in enumerate(botones):
-        b = m.addButton(t, rol)
+_ACENTO = "#7c5cff"  # color del botón principal (lo fija Instalacion(acento=...))
+
+
+def _barra_oscura(widget):
+    """Barra de título oscura (Windows 10 20H1+ / 11). Si no se puede, queda la clara."""
+    try:
+        import ctypes
+        valor = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(int(widget.winId())), 20, ctypes.byref(valor), ctypes.sizeof(valor))
+    except (OSError, AttributeError):
+        pass
+
+
+def _caja(icono, titulo, texto, detalle, botones, chip=""):
+    """Cuadro con el estilo oscuro de la app y botones propios. Devuelve el texto del botón elegido.
+
+    El primer botón es el principal (relleno de color). Los de rol Destructive se ven rojos al pasar
+    el ratón. `icono` (QMessageBox.Warning...) solo cambia el color del chip de versión."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                                   QVBoxLayout)
+    d = QDialog()
+    d.setWindowTitle(titulo)
+    d.setWindowFlags(d.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+    d.setMinimumWidth(500)
+    aviso = icono == QMessageBox.Warning
+    color = "#d9455f" if aviso else _ACENTO  # al desinstalar, el botón principal es rojo
+    d.setStyleSheet(f"""
+        QDialog {{ background: #141824; }}
+        QLabel {{ color: #e6e8f0; font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
+        QLabel#titulo {{ font-size: 19px; font-weight: 700; color: #ffffff; }}
+        QLabel#detalle {{ color: #8a90a6; }}
+        QLabel#chip {{ background: {'#3a1f2a' if aviso else '#251f4a'}; color: {'#ff9fb2' if aviso else '#c9bcff'};
+                       border: 1px solid {'#6b2a3f' if aviso else '#4a3d8f'}; border-radius: 11px;
+                       padding: 3px 12px; font-size: 12px; font-weight: 600; }}
+        QPushButton {{ font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
+                       background: #1d2130; border: 1px solid #2c3249; border-radius: 10px;
+                       padding: 9px 20px; min-width: 90px; }}
+        QPushButton:hover {{ background: #262b3f; border-color: #3a4160; }}
+        QPushButton#principal {{ background: {color}; border: 2px solid {color}; color: white; font-weight: 600; }}
+        QPushButton#principal:hover {{ border-color: #ffffff60; }}
+        QPushButton#peligro:hover {{ background: #3a1f2a; border-color: #6b2a3f; color: #ff7a93; }}
+    """)
+    raiz = QVBoxLayout(d)
+    raiz.setContentsMargins(28, 26, 28, 22)
+    raiz.setSpacing(20)
+
+    cabeza = QHBoxLayout()
+    cabeza.setSpacing(18)
+    logo = QLabel()
+    icono_app = QApplication.windowIcon()
+    if not icono_app.isNull():
+        logo.setPixmap(icono_app.pixmap(64, 64))
+        logo.setAlignment(Qt.AlignTop)
+        cabeza.addWidget(logo)
+    textos = QVBoxLayout()
+    textos.setSpacing(8)
+    t = QLabel(texto, objectName="titulo")
+    t.setWordWrap(True)
+    textos.addWidget(t)
+    if chip:
+        fila = QHBoxLayout()
+        fila.addWidget(QLabel(chip, objectName="chip"))
+        fila.addStretch()
+        textos.addLayout(fila)
+    if detalle:
+        dt = QLabel(detalle, objectName="detalle")
+        dt.setWordWrap(True)
+        textos.addWidget(dt)
+    cabeza.addLayout(textos, 1)
+    raiz.addLayout(cabeza)
+
+    fila = QHBoxLayout()
+    fila.setSpacing(10)
+    fila.addStretch()
+    elegido = {"texto": ""}
+    principal = None
+    # el principal va a la derecha (donde Windows pone «Aceptar»); los demás a su izquierda
+    for i, (txt, rol) in reversed(list(enumerate(botones))):
+        b = QPushButton(txt)
         if i == 0:
-            primero = b
-    m.setDefaultButton(primero)
-    m.exec()
-    return m.clickedButton().text() if m.clickedButton() else ""
+            b.setObjectName("principal")
+            principal = b
+        elif rol == QMessageBox.DestructiveRole:
+            b.setObjectName("peligro")
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(lambda _=False, txt=txt: (elegido.update(texto=txt), d.accept()))
+        fila.addWidget(b)
+    raiz.addLayout(fila)
+    if principal:
+        principal.setDefault(True)
+        principal.setFocus()
+    _barra_oscura(d)
+    d.exec()
+    return elegido["texto"]
 
 
 class Instalacion:
@@ -202,30 +282,29 @@ class Instalacion:
                 return self.abrir_instalada()
         else:
             info = ("Se instala solo para este usuario (no pide administrador), arranca con Windows y queda "
-                    "en el menú Inicio. También se puede desinstalar desde Windows (Aplicaciones) o desde su "
-                    "ícono junto al reloj.")
+                    "en el menú Inicio. Se desinstala desde Aplicaciones de Windows o desde su ícono junto "
+                    "al reloj.")
             if instalada is None:
-                titulo, texto = f"Instalar {self.titulo}", f"¿Instalar {self.titulo} {self.version} en esta PC?"
+                titulo, texto = f"Instalar {self.titulo}", f"Instalar {self.titulo} en esta PC"
+                chip = f"Versión {self.version}"
                 botones = [("Instalar", QMessageBox.AcceptRole), ("Solo abrir", QMessageBox.RejectRole)]
             elif instalada < nueva:
-                titulo = f"Actualizar {self.titulo}"
-                texto = (f"Hay una versión anterior instalada ({txt_inst}).\n"
-                         f"¿Actualizar a la {self.version}?")
+                titulo, texto = f"Actualizar {self.titulo}", f"Hay una versión nueva de {self.titulo}"
+                chip = f"{txt_inst}  →  {self.version}"
+                info = "Se reemplaza la versión instalada. Tus ajustes y tu biblioteca se conservan."
                 botones = [("Actualizar", QMessageBox.AcceptRole), ("Desinstalar", QMessageBox.DestructiveRole)]
             elif instalada == nueva:
-                titulo = self.titulo
-                texto = f"✔ Ya tienes la versión más actual instalada ({txt_inst})."
-                info = "Puedes abrirla, reinstalarla (si algo falla) o quitarla de esta PC."
+                titulo, texto = self.titulo, "Ya tienes la versión más actual"
+                chip = f"✔  {txt_inst} instalada"
+                info = "Puedes abrirla, reinstalarla si algo falla, o quitarla de esta PC."
                 botones = [("Abrir", QMessageBox.AcceptRole), ("Reinstalar", QMessageBox.ActionRole),
                            ("Desinstalar", QMessageBox.DestructiveRole)]
             else:
-                titulo = self.titulo
-                texto = (f"La versión instalada ({txt_inst}) es más nueva que este archivo ({self.version}).\n"
-                         "Ya tienes la versión más actual.")
+                titulo, texto = self.titulo, "Ya tienes una versión más nueva instalada"
+                chip = f"Instalada {txt_inst}  ·  este archivo {self.version}"
                 info = "Se abrirá la versión instalada. Este archivo es antiguo y se puede borrar."
                 botones = [("Abrir", QMessageBox.AcceptRole), ("Desinstalar", QMessageBox.DestructiveRole)]
-            elegido = _caja(QMessageBox.Question if instalada is None or instalada < nueva
-                            else QMessageBox.Information, titulo, texto, info, botones)
+            elegido = _caja(QMessageBox.Question, titulo, texto, info, botones, chip)
             if elegido == "Abrir":
                 return self.abrir_instalada()
             if elegido == "Desinstalar":
