@@ -1,0 +1,12 @@
+# Compilados y temporales
+__pycache__/
+build/
+build_onefile/
+portable/
+*.spec
+*.log
+*.bak
+smoketest_*.txt
+
+# Ajustes personales al correr desde el código
+settings.json
