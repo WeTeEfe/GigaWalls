@@ -505,6 +505,23 @@ class Instalacion:
               "Lo que cambió en cada versión, la más nueva arriba.", [("Entendido", QMessageBox.AcceptRole)],
               f"Versión {self.version}", lista=leer_novedades() or None)
 
+    def acerca_de(self, extra=""):
+        """«Acerca de…»: nombre, versión, qué es, dónde está instalado y acceso a las novedades.
+        `extra`: líneas propias de la app (dónde guarda sus datos, etc.)."""
+        from PySide6.QtWidgets import QMessageBox
+        if self.corriendo_instalada:
+            donde = f"Instalado en {self.carpeta}"
+        elif self.publicada:
+            donde = f"Copia sin instalar: {os.path.dirname(self.ruta_actual)}"
+        else:
+            donde = "Ejecutándose desde el código fuente"
+        detalle = "\n\n".join(p for p in (self.descripcion or self.titulo, extra, donde, "© GigaTech") if p)
+        elegido = _caja(QMessageBox.Information, f"Acerca de {self.titulo}", self.titulo, detalle,
+                        [("Cerrar", QMessageBox.AcceptRole), ("Novedades…", QMessageBox.ActionRole)],
+                        f"Versión {self.version}")
+        if elegido == "Novedades…":
+            self.ver_novedades()
+
     # ---------- desinstalar ----------
     def quitar(self):
         """Quita arranque, acceso, entrada de Aplicaciones y la carpeta instalada (con sus ajustes)."""
@@ -565,7 +582,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.1.0",
+    version="1.1.1",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",

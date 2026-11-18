@@ -558,6 +558,13 @@ class MainWindow(QMainWindow):
         self.autostart.setChecked(self._autostart_enabled())
         self.autostart.toggled.connect(self._set_autostart)
         lay.addWidget(self.autostart)
+        about = QPushButton(f"Versión {INSTALACION.version}  ·  Acerca de")
+        about.setCursor(Qt.PointingHandCursor)
+        about.setToolTip(f"Acerca de {DISPLAY_NAME} y novedades")
+        about.setStyleSheet("QPushButton { background: transparent; border: none; color: #8a90a6; font-size: 11px;"
+                            " text-align: left; padding: 8px 0 0 4px; } QPushButton:hover { color: #7c5cff; }")
+        about.clicked.connect(self._about)
+        lay.addWidget(about)
         return bar
 
     def _set_pause_covered(self, on):
@@ -1254,6 +1261,9 @@ class MainWindow(QMainWindow):
         for a in (show, self.pause_action, next_action):
             menu.addAction(a)
         menu.addSeparator()
+        acerca = QAction(f"Acerca de {DISPLAY_NAME}…", self)
+        acerca.triggered.connect(self._about)
+        menu.addAction(acerca)
         novedades = QAction("Novedades…", self)
         novedades.triggered.connect(INSTALACION.ver_novedades)
         menu.addAction(novedades)
@@ -1267,6 +1277,9 @@ class MainWindow(QMainWindow):
         self.tray.activated.connect(
             lambda r: self.show_window() if r == QSystemTrayIcon.Trigger else None)
         self.tray.show()
+
+    def _about(self):
+        INSTALACION.acerca_de(f"Tu biblioteca: {os.path.normpath(LIBRARY)}")
 
     def _toggle_pause(self):
         self.wallpaper.toggle_pause()

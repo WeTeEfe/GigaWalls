@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.1 — 18/11/2026
+- «Acerca de GigaWalls…»: versión, dónde está instalado, dónde está tu biblioteca y acceso a las novedades. Está en el menú del ícono junto al reloj y al pie de la barra lateral («Versión · Acerca de»).
+
 ## 1.1.0 — 18/11/2026
 - Abre mucho más rápido: ahora se instala como carpeta y ya no descomprime todo en cada arranque.
 - El GigaWalls.exe que se descarga es solo el instalador (instalar, actualizar, abrir, reinstalar o desinstalar); ya no corre suelto con «Solo abrir».
