@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.0.9 — 17/11/2026
+- Borrar un fondo y «Limpiar biblioteca» usan el cuadro con el estilo de la app; la limpieza muestra la lista de lo que se borra.
+
 ## 1.0.8 — 17/11/2026
 - «Novedades…» en el menú del ícono junto al reloj: el historial de versiones.
 - Al instalar, reinstalar o actualizar, GigaWalls lo confirma; al actualizar muestra lo que cambió.

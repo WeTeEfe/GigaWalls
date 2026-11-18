@@ -31,7 +31,7 @@ import motionbgs
 import optimize
 import traducir
 from desktop import DesktopWallpaper
-from instalacion import INSTALACION
+from instalacion import INSTALACION, _caja  # _caja: cuadros con el estilo de la app
 from theme import STYLE, badge, rounded
 
 SOURCES = {m.NAME: m for m in (moewalls, desktophut, motionbgs, livewallpapers4free)}
@@ -1052,7 +1052,9 @@ class MainWindow(QMainWindow):
         self.settings["favorites"] = favs
 
     def delete_wallpaper(self, path):
-        if QMessageBox.question(self, "Eliminar", f"¿Borrar {os.path.basename(path)}?") != QMessageBox.Yes:
+        if _caja(QMessageBox.Warning, "Eliminar", f"¿Borrar {os.path.basename(path)}?",
+                 "Se borra el video de tu biblioteca.",
+                 [("Borrar", QMessageBox.AcceptRole), ("Cancelar", QMessageBox.RejectRole)]) != "Borrar":
             return
         if self.settings.get("current") == path:
             self.stop_wallpaper()  # Windows no deja borrar un video que se está reproduciendo
@@ -1068,20 +1070,16 @@ class MainWindow(QMainWindow):
         keep = favs | {self.settings.get("current")}
         found = library.cleanup_candidates(paths, keep)
         if not found:
-            QMessageBox.information(self, "Limpiar biblioteca",
-                                    "No hay reflejados ni duplicados que borrar.")
+            _caja(QMessageBox.Information, "Limpiar biblioteca", "La biblioteca ya está limpia",
+                  "No hay reflejados ni duplicados que borrar.", [("Entendido", QMessageBox.AcceptRole)])
             return
         freed = library.total_size([p for p, _ in found])
-        box = QMessageBox(self)
-        box.setWindowTitle("Limpiar biblioteca")
-        box.setText(f"Se borrarán {len(found)} archivos y se liberarán {library.human(freed)}.")
-        box.setInformativeText("No se tocan tus favoritos ni el fondo actual. "
-                               "Los reflejados se pueden volver a generar.")
-        box.setDetailedText("\n".join(f"{os.path.basename(p)}  —  {why}  ({library.human(os.path.getsize(p))})"
-                                      for p, why in found))
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        if box.exec() != QMessageBox.Yes:
+        archivos = [f"{os.path.basename(p)}  —  {why}  ({library.human(os.path.getsize(p))})" for p, why in found]
+        if _caja(QMessageBox.Warning, "Limpiar biblioteca",
+                 f"Se borrarán {len(found)} archivos y se liberarán {library.human(freed)}",
+                 "No se tocan tus favoritos ni el fondo actual. Los reflejados se pueden volver a generar.",
+                 [("Borrar", QMessageBox.AcceptRole), ("Cancelar", QMessageBox.RejectRole)],
+                 lista=[("Lo que se borra", "", archivos)]) != "Borrar":
             return
         failed = 0
         for path, _ in found:
