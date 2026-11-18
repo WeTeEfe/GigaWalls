@@ -225,11 +225,31 @@ class _Grid(QListWidget):
         # se reserva siempre el hueco de la barra de scroll para que el reparto no cambie al aparecer
         avail = self.width() - 2 * self.frameWidth() - self.verticalScrollBar().sizeHint().width() - 8
         cols = max(1, avail // self.MIN_CELL)
-        cell = QSize(avail // cols, self.CELL_H)
+        # Alto de fila para que quepa un número entero de filas: si no, la de abajo queda cortada justo en
+        # los nombres (a 1920×1080 cabían 3,9). La miniatura se achica o la tarjeta crece un poco para encajar.
+        vh = self.viewport().height()
+        filas = max(1, round(vh / self.CELL_H))
+        alto = max(120, vh // filas)
+        icono_h = min(ICON_SIZE.height(), alto - 50)
+        icono = QSize(round(icono_h * ICON_SIZE.width() / ICON_SIZE.height()), icono_h)
+        if icono != self.iconSize():
+            self.setIconSize(icono)
+        cell = QSize(avail // cols, alto)
         if cell != self.gridSize():
             self.setGridSize(cell)
             for i in range(self.count()):
                 self.item(i).setSizeHint(cell)
+
+    def wheelEvent(self, event):
+        """La rueda avanza fila por fila, siempre alineada: así nunca queda una fila cortada abajo."""
+        self._rueda = getattr(self, "_rueda", 0) + event.angleDelta().y()
+        pasos = int(self._rueda / 120)  # los touchpads mandan trozos chicos: se acumulan
+        if pasos:
+            self._rueda -= pasos * 120
+            barra, fila = self.verticalScrollBar(), self.gridSize().height()
+            actual = round(barra.value() / fila) * fila
+            barra.setValue(actual - pasos * fila)
+        event.accept()
 
 
 def load_settings():
