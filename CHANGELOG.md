@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.3 — 18/11/2026
+- La ventana se abre centrada y entera dentro de la pantalla: antes la parte de abajo (y «Versión · Acerca de») quedaba tapada por la barra de tareas.
+
 ## 1.1.2 — 18/11/2026
 - La cuadrícula del catálogo y de la biblioteca muestra siempre filas completas: los nombres de la última fila ya no salen cortados (las tarjetas se ajustan al alto de la ventana).
 - La rueda del ratón avanza de fila en fila.

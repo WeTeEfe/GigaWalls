@@ -252,6 +252,17 @@ class _Grid(QListWidget):
         event.accept()
 
 
+def encajar_ventana(win, ancho, alto, barra_titulo=32):
+    """Tamaño y posición iniciales dentro del área de trabajo de la pantalla principal (sin la barra de
+    tareas), centrada. Sin esto Windows la ponía en cascada y en 1920×1080 el pie quedaba bajo la barra."""
+    area = QApplication.primaryScreen().availableGeometry()
+    ancho = max(win.minimumWidth(), min(ancho, area.width()))
+    alto = max(win.minimumHeight(), min(alto, area.height() - barra_titulo))
+    win.resize(ancho, alto)
+    win.move(area.x() + (area.width() - ancho) // 2,
+             area.y() + max(0, (area.height() - alto - barra_titulo) // 2))
+
+
 def load_settings():
     try:
         with open(SETTINGS, encoding="utf-8-sig") as f:  # -sig: tolera la marca BOM de algunos editores
@@ -438,8 +449,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(DISPLAY_NAME)
         self.setWindowIcon(QIcon(ICON_PATH))
         set_dark_title_bar(int(self.winId()))
-        self.resize(1240, 820)
         self.setMinimumSize(1000, 780)  # por debajo, la barra lateral no cabe
+        encajar_ventana(self, 1240, 820)
         self.setAcceptDrops(True)  # arrastrar videos a la ventana para importarlos
         self.rotation_timer = QTimer(self)
         self.rotation_timer.timeout.connect(lambda: self.next_wallpaper(auto=True))
