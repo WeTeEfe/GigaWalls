@@ -198,7 +198,7 @@ def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
 
 class Instalacion:
     def __init__(self, titulo, exe, clave, valor_run, version, arg_inicio="--minimized",
-                 descripcion="", datos=(), acento=None):
+                 descripcion="", datos=(), acento=None, conserva="Tus ajustes"):
         self.titulo = titulo            # nombre visible: «GigaWalls»
         self.exe_nombre = exe           # «GigaWalls.exe»
         self.clave = clave              # subclave en «Aplicaciones instaladas»
@@ -207,6 +207,7 @@ class Instalacion:
         self.arg_inicio = arg_inicio    # argumentos al arrancar con Windows
         self.descripcion = descripcion
         self.datos = tuple(datos)       # archivos de ajustes junto al .exe que se llevan al instalar
+        self.conserva = conserva        # lo que se mantiene al actualizar: «Tus ajustes y tu biblioteca»
         if acento:                      # color del botón principal de los cuadros (el de la app)
             global _ACENTO
             _ACENTO = acento
@@ -351,7 +352,7 @@ class Instalacion:
             elif instalada < nueva:
                 titulo, texto = f"Actualizar {self.titulo}", f"Hay una versión nueva de {self.titulo}"
                 chip = f"{txt_inst}  →  {self.version}"
-                info = "Se reemplaza la versión instalada. Tus ajustes y tu biblioteca se conservan."
+                info = f"Se reemplaza la versión instalada. {self.conserva} se conservan."
                 botones = [("Actualizar", QMessageBox.AcceptRole), ("Desinstalar", QMessageBox.DestructiveRole)]
             elif instalada == nueva:
                 titulo, texto = self.titulo, "Ya tienes la versión más actual"
@@ -483,4 +484,5 @@ INSTALACION = Instalacion(
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",
+    conserva="Tus ajustes y tu biblioteca",
 )
