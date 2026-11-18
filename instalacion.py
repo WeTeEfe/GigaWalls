@@ -265,9 +265,9 @@ class Instalacion:
 
     def _texto_info(self):
         partes = ["Se instala solo para este usuario (no pide administrador)"]
-        partes.append("arranca con Windows y queda en el menú Inicio" if self.arranque else "queda en el menú Inicio")
+        partes.append(", arranca con Windows y queda en el menú Inicio" if self.arranque else " y queda en el menú Inicio")
         donde = "desde Aplicaciones de Windows" + (" o desde su ícono junto al reloj" if self.bandeja else "")
-        return f"{partes[0]}, {partes[1]}. Se desinstala {donde}."
+        return f"{partes[0]}{partes[1]}. Se desinstala {donde}."
 
     @property
     def version_instalada(self):
@@ -541,7 +541,8 @@ class Instalacion:
         elegido = _caja(
             QMessageBox.Warning, f"Desinstalar {self.titulo}", f"¿Quitar {self.titulo} de esta PC?",
             (detalle + "\n\n" if detalle else "") +
-            "Se quitan el arranque con Windows, el acceso del menú Inicio y la configuración.",
+            ("Se quitan el arranque con Windows, el acceso del menú Inicio y la configuración." if self.arranque
+             else "Se quitan el acceso del menú Inicio y la configuración."),
             [("Desinstalar", QMessageBox.AcceptRole), ("Cancelar", QMessageBox.RejectRole)])
         if elegido != "Desinstalar":
             return False
