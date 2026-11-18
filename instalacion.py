@@ -1,9 +1,13 @@
 """Instalar / actualizar / desinstalar en la PC actual, solo para el usuario (sin administrador).
 
-El .exe sigue siendo portable: al abrirlo desde un USB ofrece instalarse (o actualizar la copia
-instalada) y, si se prefiere, "Solo abrir". La copia instalada vive en
-%LocalAppData%\\GigaTech\\<Programa>, queda en el menú Inicio, en «Aplicaciones instaladas» de Windows
-y puede arrancar con Windows. Se desinstala desde Windows o desde el ícono junto al reloj.
+Dos modos (Instalacion(modo=...)):
+  «exe»     el .exe es portable: al abrirlo desde un USB ofrece instalarse (o actualizar la copia
+            instalada) y, si se prefiere, "Solo abrir". Se instala copiando ese mismo .exe.
+  «carpeta» el .exe de Release es solo un instalador: trae dentro app.zip (la app compilada como carpeta,
+            PyInstaller --onedir, que abre mucho más rápido que un onefile) y reemplaza los archivos del
+            programa en la carpeta instalada sin tocar ajustes ni nada más. Ver instalador.py.
+La copia instalada vive en %LocalAppData%\\GigaTech\\<Programa>, queda en el menú Inicio, en «Aplicaciones
+instaladas» de Windows y puede arrancar con Windows. Se desinstala desde Windows o desde el ícono junto al reloj.
 
 También muestra las novedades: CHANGELOG.md va dentro del .exe («## versión — fecha» y debajo «- cambio»);
 «Novedades…» en la bandeja abre el historial y la copia instalada avisa una vez cuando cambió de versión.
@@ -140,8 +144,11 @@ def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
     t.setWordWrap(True)
     textos.addWidget(t)
     if chip:
+        from PySide6.QtWidgets import QSizePolicy
         fila = QHBoxLayout()
-        fila.addWidget(QLabel(chip, objectName="chip"))
+        et_chip = QLabel(chip, objectName="chip")
+        et_chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)  # que no se estire en alto
+        fila.addWidget(et_chip)
         fila.addStretch()
         textos.addLayout(fila)
     if detalle:
@@ -198,7 +205,8 @@ def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
 
 class Instalacion:
     def __init__(self, titulo, exe, clave, valor_run, version, arg_inicio="--minimized",
-                 descripcion="", datos=(), acento=None, conserva="Tus ajustes"):
+                 descripcion="", datos=(), acento=None, conserva="Tus ajustes", modo="exe", arranque=True,
+                 bandeja=True, nota_desinstalar=""):
         self.titulo = titulo            # nombre visible: «GigaWalls»
         self.exe_nombre = exe           # «GigaWalls.exe»
         self.clave = clave              # subclave en «Aplicaciones instaladas»
@@ -208,6 +216,10 @@ class Instalacion:
         self.descripcion = descripcion
         self.datos = tuple(datos)       # archivos de ajustes junto al .exe que se llevan al instalar
         self.conserva = conserva        # lo que se mantiene al actualizar: «Tus ajustes y tu biblioteca»
+        self.modo = modo                # «exe» (portable que se copia) o «carpeta» (instalador con app.zip)
+        self.arranque = arranque        # al instalar, que arranque con Windows
+        self.bandeja = bandeja          # la app tiene ícono junto al reloj (con «Desinstalar…»)
+        self.nota_desinstalar = nota_desinstalar  # lo que se aclara al desinstalar («Tus videos no se borran»)
         if acento:                      # color del botón principal de los cuadros (el de la app)
             global _ACENTO
             _ACENTO = acento
@@ -246,6 +258,18 @@ class Instalacion:
         return os.path.isfile(self.exe)
 
     @property
+    def _zip(self):
+        """Modo carpeta: el paquete con la app que lleva dentro el instalador (None si esto no es el instalador)."""
+        ruta = os.path.join(getattr(sys, "_MEIPASS", ""), "app.zip")
+        return ruta if self.modo == "carpeta" and os.path.isfile(ruta) else None
+
+    def _texto_info(self):
+        partes = ["Se instala solo para este usuario (no pide administrador)"]
+        partes.append("arranca con Windows y queda en el menú Inicio" if self.arranque else "queda en el menú Inicio")
+        donde = "desde Aplicaciones de Windows" + (" o desde su ícono junto al reloj" if self.bandeja else "")
+        return f"{partes[0]}, {partes[1]}. Se desinstala {donde}."
+
+    @property
     def version_instalada(self):
         if not self.instalada:
             return None
@@ -280,17 +304,65 @@ class Instalacion:
 
     # ---------- instalar ----------
     def cerrar_otras(self):
-        """Cierra las copias instaladas que estén abiertas (no se puede reemplazar un .exe en uso)."""
+        """Cierra las copias instaladas que estén abiertas y lo que corra desde su carpeta (no se puede
+        reemplazar un archivo en uso)."""
         yo = f"{os.getpid()},{os.getppid()}"  # el proceso y su lanzador (onefile)
-        _ps(f"Get-Process | Where-Object {{ $_.Path -eq '{_q(self.exe)}' -and $_.Id -notin @({yo}) }}"
+        dentro = _q(os.path.join(self.carpeta, ""))
+        _ps(f"Get-Process | Where-Object {{ $_.Path -and ($_.Path -eq '{_q(self.exe)}' -or "
+            f"$_.Path.StartsWith('{dentro}', [StringComparison]::OrdinalIgnoreCase)) -and $_.Id -notin @({yo}) }}"
             " | Stop-Process -Force -ErrorAction SilentlyContinue")
         time.sleep(0.8)
 
+    @staticmethod
+    def _reintentar(fn, segundos=10):
+        """Un proceso recién cerrado tarda un poco en soltar sus archivos: reintenta hasta `segundos`."""
+        fin = time.monotonic() + segundos
+        while True:
+            try:
+                return fn()
+            except OSError:
+                if time.monotonic() > fin:
+                    raise
+                time.sleep(0.3)
+
+    def _instalar_carpeta(self):
+        """Modo carpeta: reemplaza solo los archivos del programa (los que trae app.zip: el .exe y _internal)."""
+        import zipfile
+        temporal = os.path.join(self.carpeta, "_nuevo")
+        shutil.rmtree(temporal, ignore_errors=True)
+        with zipfile.ZipFile(self._zip) as z:
+            z.extractall(temporal)
+        nuevos = os.listdir(temporal)
+        if self.exe_nombre not in nuevos:
+            raise RuntimeError(f"El paquete no trae {self.exe_nombre}.")
+        protegidos = {n.lower() for n in (*self.datos, "version_vista.txt", "_nuevo")}
+        for nombre in nuevos:
+            if nombre.lower() in protegidos:  # nunca pisar ajustes del usuario
+                continue
+            destino = os.path.join(self.carpeta, nombre)
+            if os.path.isdir(destino):
+                self._reintentar(lambda d=destino: shutil.rmtree(d))
+            elif os.path.exists(destino):
+                self._reintentar(lambda d=destino: os.remove(d))
+            self._reintentar(lambda n=nombre, d=destino: os.replace(os.path.join(temporal, n), d))
+        shutil.rmtree(temporal, ignore_errors=True)
+
     def instalar(self):
         origen = self.ruta_actual
+        anterior = self.version_instalada
         self.cerrar_otras()
         os.makedirs(self.carpeta, exist_ok=True)
-        shutil.copy2(origen, self.exe)
+        if anterior and not os.path.exists(self._version_vista):
+            # Instalada por una versión que aún no guardaba version_vista.txt: que avise de lo nuevo igual
+            try:
+                with open(self._version_vista, "w", encoding="utf-8") as f:
+                    f.write(".".join(map(str, anterior)))
+            except OSError:
+                pass
+        if self._zip:
+            self._instalar_carpeta()
+        else:
+            self._reintentar(lambda: shutil.copy2(origen, self.exe))
         for nombre in self.datos:  # lleva los ajustes del .exe portable, sin pisar los ya instalados
             src, dst = os.path.join(os.path.dirname(origen), nombre), os.path.join(self.carpeta, nombre)
             if os.path.isfile(src) and not os.path.exists(dst):
@@ -299,7 +371,8 @@ class Instalacion:
             "$s.TargetPath='{exe}';$s.WorkingDirectory='{dir}';$s.Description='{desc}';$s.Save()".format(
                 lnk=_q(self._acceso), exe=_q(self.exe), dir=_q(self.carpeta),
                 desc=_q(self.descripcion or self.titulo)))
-        self.iniciar_con_windows(True, self.exe)  # la copia instalada, no la del USB
+        if self.arranque:
+            self.iniciar_con_windows(True, self.exe)  # la copia instalada, no la del USB
         self._registrar()
 
     def _registrar(self):
@@ -315,7 +388,8 @@ class Instalacion:
             txt("UninstallString", f'"{self.exe}" --desinstalar')
             num("NoModify", 1)
             num("NoRepair", 1)
-            num("EstimatedSize", int(os.path.getsize(self.exe) / 1024))
+            tam = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(self.carpeta) for f in fs)
+            num("EstimatedSize", int(tam / 1024))
 
     def abrir_instalada(self, aviso=None):
         """Lanza la copia instalada (con «--instalado» o «--reinstalado» para que lo confirme). Devuelve True:
@@ -333,7 +407,11 @@ class Instalacion:
         Devuelve True si esta instancia debe cerrarse (se abrió la instalada o se desinstaló)."""
         if not self.publicada or self.corriendo_instalada:
             return False
+        if self.modo == "carpeta" and not self._zip:
+            return False  # la app compilada en carpeta (no el instalador): corre tal cual, sin ofrecer nada
         from PySide6.QtWidgets import QMessageBox
+        detalle_desinstalar = detalle_desinstalar or self.nota_desinstalar
+        solo_instalador = self._zip is not None  # sin «Solo abrir»: este .exe no trae la app para correr suelta
         instalada = self.version_instalada
         nueva = _version(self.version)
         elegido = ""
@@ -342,13 +420,13 @@ class Instalacion:
             if instalada is not None and instalada >= nueva:
                 return self.abrir_instalada()
         else:
-            info = ("Se instala solo para este usuario (no pide administrador), arranca con Windows y queda "
-                    "en el menú Inicio. Se desinstala desde Aplicaciones de Windows o desde su ícono junto "
-                    "al reloj.")
+            info = self._texto_info()
             if instalada is None:
                 titulo, texto = f"Instalar {self.titulo}", f"Instalar {self.titulo} en esta PC"
                 chip = f"Versión {self.version}"
-                botones = [("Instalar", QMessageBox.AcceptRole), ("Solo abrir", QMessageBox.RejectRole)]
+                botones = [("Instalar", QMessageBox.AcceptRole)]
+                if not solo_instalador:
+                    botones.append(("Solo abrir", QMessageBox.RejectRole))
             elif instalada < nueva:
                 titulo, texto = f"Actualizar {self.titulo}", f"Hay una versión nueva de {self.titulo}"
                 chip = f"{txt_inst}  →  {self.version}"
@@ -377,9 +455,10 @@ class Instalacion:
         try:
             self.instalar()
         except Exception as e:  # noqa: BLE001
-            _caja(QMessageBox.Warning, f"Instalar {self.titulo}", "No se pudo instalar. Se abre sin instalar.",
+            _caja(QMessageBox.Warning, f"Instalar {self.titulo}",
+                  "No se pudo instalar." if solo_instalador else "No se pudo instalar. Se abre sin instalar.",
                   str(e), [("Aceptar", QMessageBox.AcceptRole)])
-            return False
+            return solo_instalador
         # Al actualizar no hace falta: la copia instalada nota sola que cambió de versión (avisar_novedades).
         return self.abrir_instalada({"Instalar": "--instalado", "Reinstalar": "--reinstalado"}.get(elegido))
 
@@ -407,8 +486,9 @@ class Instalacion:
         ok = [("Entendido", QMessageBox.AcceptRole)]
         if "--instalado" in sys.argv:
             _caja(QMessageBox.Information, f"{self.titulo} instalado", f"{self.titulo} quedó instalado en esta PC",
-                  "Arranca con Windows y está en el menú Inicio. Se desinstala desde Aplicaciones de Windows o desde "
-                  "su ícono junto al reloj.", ok, f"✔  {self.version} instalada")
+                  ("Arranca con Windows y está en el menú Inicio." if self.arranque else "Está en el menú Inicio.") +
+                  " Se desinstala desde Aplicaciones de Windows" +
+                  (" o desde su ícono junto al reloj." if self.bandeja else "."), ok, f"✔  {self.version} instalada")
         elif "--reinstalado" in sys.argv:
             _caja(QMessageBox.Information, f"{self.titulo} reinstalado", f"{self.titulo} se reinstaló",
                   "Tus ajustes siguen como estaban.", ok, f"✔  {self.version} instalada")
@@ -438,11 +518,14 @@ class Instalacion:
         except OSError:
             pass
         if self.corriendo_instalada:
-            # El .exe no puede borrarse a sí mismo mientras corre: lo borra un cmd oculto al cerrar.
+            # El .exe no puede borrarse a sí mismo mientras corre: lo borra un cmd oculto al cerrar. Reintenta
+            # cada segundo durante 30 s («timeout» no sirve: sin consola falla y el rmdir corría de inmediato).
             padre = os.path.dirname(self.carpeta)
+            # como texto, no lista: Python escaparía las comillas como \" y cmd no lo entiende
             subprocess.Popen(
-                ["cmd.exe", "/c", f'timeout /t 3 /nobreak >nul & rmdir /s /q "{self.carpeta}" & rmdir "{padre}"'],
-                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS, close_fds=True)
+                f'cmd.exe /c "for /l %i in (1,1,30) do (ping -n 2 127.0.0.1 >nul & '
+                f'if exist "{self.carpeta}" rmdir /s /q "{self.carpeta}") & rmdir "{padre}" 2>nul"',
+                creationflags=CREATE_NO_WINDOW, close_fds=True)  # con DETACHED_PROCESS (sin consola) no corría
         else:
             shutil.rmtree(self.carpeta, ignore_errors=True)
             try:
@@ -454,6 +537,7 @@ class Instalacion:
         """Pregunta y desinstala. `limpiar` (opcional) deja la app en orden antes de borrar.
         Devuelve True si se desinstaló: el llamador debe cerrar la app de inmediato."""
         from PySide6.QtWidgets import QMessageBox
+        detalle = detalle or self.nota_desinstalar
         elegido = _caja(
             QMessageBox.Warning, f"Desinstalar {self.titulo}", f"¿Quitar {self.titulo} de esta PC?",
             (detalle + "\n\n" if detalle else "") +
@@ -480,9 +564,11 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.0.9",
+    version="1.1.0",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",
     conserva="Tus ajustes y tu biblioteca",
+    modo="carpeta",                  # Release = instalador (instalador.py); la app instalada es una carpeta
+    nota_desinstalar="Los videos de tu biblioteca (Videos\\GigaWalls) no se borran.",
 )

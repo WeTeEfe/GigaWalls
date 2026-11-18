@@ -3,6 +3,11 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.0 — 18/11/2026
+- Abre mucho más rápido: ahora se instala como carpeta y ya no descomprime todo en cada arranque.
+- El GigaWalls.exe que se descarga es solo el instalador (instalar, actualizar, abrir, reinstalar o desinstalar); ya no corre suelto con «Solo abrir».
+- Al actualizar se conservan tus ajustes y tu biblioteca; si vienes de una versión antigua también ves lo nuevo.
+
 ## 1.0.9 — 17/11/2026
 - Borrar un fondo y «Limpiar biblioteca» usan el cuadro con el estilo de la app; la limpieza muestra la lista de lo que se borra.
 
