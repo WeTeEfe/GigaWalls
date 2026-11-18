@@ -1255,8 +1255,11 @@ class MainWindow(QMainWindow):
         quit_.triggered.connect(self._quit)
         for a in (show, self.pause_action, next_action):
             menu.addAction(a)
+        menu.addSeparator()
+        novedades = QAction("Novedades…", self)
+        novedades.triggered.connect(INSTALACION.ver_novedades)
+        menu.addAction(novedades)
         if INSTALACION.corriendo_instalada:  # solo si es la copia instalada
-            menu.addSeparator()
             uninstall = QAction("Desinstalar de esta PC…", self)
             uninstall.triggered.connect(self._uninstall)
             menu.addAction(uninstall)
@@ -1617,6 +1620,7 @@ def main():
         win.ensure_profile(current)
     if "--minimized" not in sys.argv:
         win.show()
+    QTimer.singleShot(1500, INSTALACION.avisar_novedades)  # «se instaló / se actualizó: esto es lo nuevo» (una vez)
     code = app.exec()
     # Todo se guarda en el momento (ajustes, biblioteca) y el fondo ya se detuvo en _quit. Salir ya,
     # sin esperar a peticiones de red lentas que mantendrían el proceso vivo (e invisible) un buen rato.

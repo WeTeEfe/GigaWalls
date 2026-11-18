@@ -5,8 +5,11 @@ instalada) y, si se prefiere, "Solo abrir". La copia instalada vive en
 %LocalAppData%\\GigaTech\\<Programa>, queda en el menú Inicio, en «Aplicaciones instaladas» de Windows
 y puede arrancar con Windows. Se desinstala desde Windows o desde el ícono junto al reloj.
 
+También muestra las novedades: CHANGELOG.md va dentro del .exe («## versión — fecha» y debajo «- cambio»);
+«Novedades…» en la bandeja abre el historial y la copia instalada avisa una vez cuando cambió de versión.
+
 Este archivo es idéntico en GigaWalls y Grabador de pantalla: lo único que cambia es la
-configuración al final (INSTALACION = Instalacion(...)).
+configuración al final (INSTALACION = Instalacion(...)). Si se corrige uno, copiar al otro.
 """
 import os
 import shutil
@@ -46,6 +49,24 @@ def _version(texto):
 _ACENTO = "#7c5cff"  # color del botón principal (lo fija Instalacion(acento=...))
 
 
+def leer_novedades():
+    """CHANGELOG.md (dentro del .exe, o junto al código): [(versión, fecha, [cambios])], la más nueva primero."""
+    import re
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    entradas = []
+    try:
+        with open(os.path.join(base, "CHANGELOG.md"), encoding="utf-8") as f:
+            for linea in f:
+                m = re.match(r"^##\s+(\d+\.\d+\.\d+)\s*(?:[—–-]\s*(.*))?$", linea.strip())
+                if m:
+                    entradas.append((m[1], (m[2] or "").strip(), []))
+                elif entradas and linea.lstrip().startswith("- "):
+                    entradas[-1][2].append(linea.lstrip()[2:].strip())
+    except OSError:
+        pass
+    return entradas
+
+
 def _barra_oscura(widget):
     """Barra de título oscura (Windows 10 20H1+ / 11). Si no se puede, queda la clara."""
     try:
@@ -57,27 +78,33 @@ def _barra_oscura(widget):
         pass
 
 
-def _caja(icono, titulo, texto, detalle, botones, chip=""):
+def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
     """Cuadro con el estilo oscuro de la app y botones propios. Devuelve el texto del botón elegido.
 
     El primer botón es el principal (relleno de color). Los de rol Destructive se ven rojos al pasar
-    el ratón. `icono` (QMessageBox.Warning...) solo cambia el color del chip de versión."""
+    el ratón. `icono` (QMessageBox.Warning...) solo cambia el color del chip de versión. `lista`: entradas de
+    leer_novedades() para mostrar debajo, con desplazamiento."""
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                                   QVBoxLayout)
+    from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                                   QScrollArea, QVBoxLayout, QWidget)
     d = QDialog()
     d.setWindowTitle(titulo)
     d.setWindowFlags(d.windowFlags() & ~Qt.WindowContextHelpButtonHint)
     d.setMinimumWidth(500)
     aviso = icono == QMessageBox.Warning
     color = "#d9455f" if aviso else _ACENTO  # al desinstalar, el botón principal es rojo
+
+    def mezcla(c1, c2, t):
+        """c1 y c2 «#rrggbb» mezclados (t = cuánto de c2): el chip toma el color de la app sobre el fondo."""
+        a, b = (tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in (c1, c2))
+        return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+    chip_fondo, chip_borde, chip_texto = mezcla("#141824", color, .18), mezcla("#141824", color, .5), mezcla(color, "#ffffff", .55)
     d.setStyleSheet(f"""
         QDialog {{ background: #141824; }}
         QLabel {{ color: #e6e8f0; font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
         QLabel#titulo {{ font-size: 19px; font-weight: 700; color: #ffffff; }}
         QLabel#detalle {{ color: #8a90a6; }}
-        QLabel#chip {{ background: {'#3a1f2a' if aviso else '#251f4a'}; color: {'#ff9fb2' if aviso else '#c9bcff'};
-                       border: 1px solid {'#6b2a3f' if aviso else '#4a3d8f'}; border-radius: 11px;
+        QLabel#chip {{ background: {chip_fondo}; color: {chip_texto}; border: 1px solid {chip_borde}; border-radius: 11px;
                        padding: 3px 12px; font-size: 12px; font-weight: 600; }}
         QPushButton {{ font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
                        background: #1d2130; border: 1px solid #2c3249; border-radius: 10px;
@@ -86,6 +113,14 @@ def _caja(icono, titulo, texto, detalle, botones, chip=""):
         QPushButton#principal {{ background: {color}; border: 2px solid {color}; color: white; font-weight: 600; }}
         QPushButton#principal:hover {{ border-color: #ffffff60; }}
         QPushButton#peligro:hover {{ background: #3a1f2a; border-color: #6b2a3f; color: #ff7a93; }}
+        QScrollArea {{ background: transparent; border: none; }}
+        QWidget#lista {{ background: transparent; }}
+        QLabel#version {{ color: {_ACENTO}; font-weight: 700; font-size: 13px; margin-top: 8px; }}
+        QLabel#cambio {{ color: #c9cdda; }}
+        QScrollBar:vertical {{ background: transparent; width: 8px; }}
+        QScrollBar::handle:vertical {{ background: #2c3249; border-radius: 4px; min-height: 30px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
     """)
     raiz = QVBoxLayout(d)
     raiz.setContentsMargins(28, 26, 28, 22)
@@ -116,6 +151,26 @@ def _caja(icono, titulo, texto, detalle, botones, chip=""):
     cabeza.addLayout(textos, 1)
     raiz.addLayout(cabeza)
 
+    if lista:
+        cont = QWidget(objectName="lista")
+        capa = QVBoxLayout(cont)
+        capa.setContentsMargins(82, 0, 10, 0)  # alineado con el texto (a la derecha del logo)
+        capa.setSpacing(3)
+        for version, fecha, cambios in lista:
+            capa.addWidget(QLabel(version + (f"  ·  {fecha}" if fecha else ""), objectName="version"))
+            for c in cambios:
+                et = QLabel(f"•  {c}", objectName="cambio")
+                et.setWordWrap(True)
+                capa.addWidget(et)
+        capa.addStretch()
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setWidget(cont)
+        area.setMinimumHeight(min(340, 60 + 26 * sum(1 + len(e[2]) for e in lista)))
+        area.setMaximumHeight(340)
+        raiz.addWidget(area)
+
     fila = QHBoxLayout()
     fila.setSpacing(10)
     fila.addStretch()
@@ -143,7 +198,7 @@ def _caja(icono, titulo, texto, detalle, botones, chip=""):
 
 class Instalacion:
     def __init__(self, titulo, exe, clave, valor_run, version, arg_inicio="--minimized",
-                 descripcion="", datos=()):
+                 descripcion="", datos=(), acento=None):
         self.titulo = titulo            # nombre visible: «GigaWalls»
         self.exe_nombre = exe           # «GigaWalls.exe»
         self.clave = clave              # subclave en «Aplicaciones instaladas»
@@ -152,6 +207,9 @@ class Instalacion:
         self.arg_inicio = arg_inicio    # argumentos al arrancar con Windows
         self.descripcion = descripcion
         self.datos = tuple(datos)       # archivos de ajustes junto al .exe que se llevan al instalar
+        if acento:                      # color del botón principal de los cuadros (el de la app)
+            global _ACENTO
+            _ACENTO = acento
 
     # ---------- rutas ----------
     @property
@@ -258,11 +316,12 @@ class Instalacion:
             num("NoRepair", 1)
             num("EstimatedSize", int(os.path.getsize(self.exe) / 1024))
 
-    def abrir_instalada(self):
-        """Lanza la copia instalada. Devuelve True: esta instancia debe cerrarse."""
+    def abrir_instalada(self, aviso=None):
+        """Lanza la copia instalada (con «--instalado» o «--reinstalado» para que lo confirme). Devuelve True:
+        esta instancia debe cerrarse."""
         env = {k: v for k, v in os.environ.items() if k != "_MEIPASS2" and not k.startswith("_PYI")}
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # que no reutilice la carpeta temporal de esta
-        args = [a for a in sys.argv[1:] if a != "--instalar"]
+        args = [a for a in sys.argv[1:] if a != "--instalar"] + ([aviso] if aviso else [])
         subprocess.Popen([self.exe, *args], env=env, cwd=self.carpeta, close_fds=True,
                          creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW)
         return True
@@ -276,6 +335,7 @@ class Instalacion:
         from PySide6.QtWidgets import QMessageBox
         instalada = self.version_instalada
         nueva = _version(self.version)
+        elegido = ""
         txt_inst = ".".join(map(str, instalada)) if instalada is not None else ""
         if "--instalar" in sys.argv:  # instalación por script, sin preguntar
             if instalada is not None and instalada >= nueva:
@@ -319,7 +379,50 @@ class Instalacion:
             _caja(QMessageBox.Warning, f"Instalar {self.titulo}", "No se pudo instalar. Se abre sin instalar.",
                   str(e), [("Aceptar", QMessageBox.AcceptRole)])
             return False
-        return self.abrir_instalada()
+        # Al actualizar no hace falta: la copia instalada nota sola que cambió de versión (avisar_novedades).
+        return self.abrir_instalada({"Instalar": "--instalado", "Reinstalar": "--reinstalado"}.get(elegido))
+
+    # ---------- novedades ----------
+    @property
+    def _version_vista(self):
+        return os.path.join(self.carpeta, "version_vista.txt")
+
+    def avisar_novedades(self):
+        """Al arrancar la copia instalada: confirma la instalación o, si cambió de versión desde la última vez
+        (por el menú de actualizar, por release o como sea), muestra una vez lo nuevo. Llamar con la app ya creada."""
+        if not self.corriendo_instalada:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        try:
+            with open(self._version_vista, encoding="utf-8") as f:
+                vista = f.read().strip()
+        except OSError:
+            vista = ""
+        try:
+            with open(self._version_vista, "w", encoding="utf-8") as f:
+                f.write(self.version)
+        except OSError:
+            pass
+        ok = [("Entendido", QMessageBox.AcceptRole)]
+        if "--instalado" in sys.argv:
+            _caja(QMessageBox.Information, f"{self.titulo} instalado", f"{self.titulo} quedó instalado en esta PC",
+                  "Arranca con Windows y está en el menú Inicio. Se desinstala desde Aplicaciones de Windows o desde "
+                  "su ícono junto al reloj.", ok, f"✔  {self.version} instalada")
+        elif "--reinstalado" in sys.argv:
+            _caja(QMessageBox.Information, f"{self.titulo} reinstalado", f"{self.titulo} se reinstaló",
+                  "Tus ajustes siguen como estaban.", ok, f"✔  {self.version} instalada")
+        elif vista and _version(vista) < _version(self.version):
+            nuevas = [e for e in leer_novedades() if _version(vista) < _version(e[0]) <= _version(self.version)]
+            _caja(QMessageBox.Information, f"{self.titulo} actualizado", f"{self.titulo} se actualizó",
+                  "Tus ajustes siguen como estaban." + (" Esto es lo nuevo:" if nuevas else ""), ok,
+                  f"{vista}  →  {self.version}", lista=nuevas)
+
+    def ver_novedades(self):
+        """«Novedades…» de la bandeja: el historial completo."""
+        from PySide6.QtWidgets import QMessageBox
+        _caja(QMessageBox.Information, f"Novedades de {self.titulo}", f"Novedades de {self.titulo}",
+              "Lo que cambió en cada versión, la más nueva arriba.", [("Entendido", QMessageBox.AcceptRole)],
+              f"Versión {self.version}", lista=leer_novedades() or None)
 
     # ---------- desinstalar ----------
     def quitar(self):
@@ -376,7 +479,8 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.0.7",
+    version="1.0.8",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
+    acento="#7c5cff",
 )

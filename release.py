@@ -1,6 +1,7 @@
 """Publica GigaWalls en Desktop\\Release solo si pasa todas las pruebas.
 
   1. Sube la versión en instalacion.py (1.0.5 -> 1.0.6) para que el exe ofrezca «Actualizar».
+     Antes exige que CHANGELOG.md tenga la sección de esa versión (lo que verá el usuario en «Novedades»).
   2. Prueba completa desde el código (main.py --smoketest).
   3. Compila el .exe de un solo archivo (build_portable.bat onefile).
   4. Repite la prueba con el .exe ya compilado (detecta lo que falte en el empaquetado).
@@ -59,6 +60,10 @@ def main():
     partes = anterior.split(".")
     partes[-1] = str(int(partes[-1]) + 1)
     nueva = ".".join(partes)
+    with open(os.path.join(AQUI, "CHANGELOG.md"), encoding="utf-8") as f:
+        if not re.search(rf"^##\s+{re.escape(nueva)}\b", f.read(), re.M):
+            sys.exit(f"Falta la sección «## {nueva} — fecha» en CHANGELOG.md (lo que cambió en esta versión). "
+                     "Agrégala y vuelve a correr release.")
     paso(f"Versión {anterior} -> {nueva}")
     escribir_version(original, nueva)
     try:

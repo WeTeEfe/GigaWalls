@@ -18,6 +18,7 @@ python -m PyInstaller --noconfirm --clean --windowed %MODE% ^
   --name GigaWalls ^
   --icon "%~dp0assets\gigawalls.ico" ^
   --add-data "%~dp0assets;assets" ^
+  --add-data "%~dp0CHANGELOG.md;." ^
   --collect-binaries imageio_ffmpeg ^
   --exclude-module tkinter ^
   --distpath "%~dp0portable" ^
