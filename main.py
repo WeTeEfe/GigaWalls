@@ -10,6 +10,12 @@ import winreg
 from concurrent.futures import ThreadPoolExecutor
 from itertools import zip_longest
 
+# Qt 6 marca el ritmo de dibujo de las ventanas Direct3D (el video del fondo) con un hilo que espera el
+# refresco vertical de cada monitor. Al apagarse o reconfigurarse una pantalla ese hilo se queda colgado
+# y el fondo deja de dibujarse: pantallas negras o congeladas aunque el video se siga decodificando
+# (19/11). Con esto Qt usa un temporizador normal. Tiene que estar antes de crear la QApplication.
+os.environ.setdefault("QT_D3D_NO_VBLANK_THREAD", "1")
+
 import cv2
 from PySide6.QtCore import QObject, QRect, QRunnable, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QTransform
