@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.4 — 19/11/2026
+- Apagar o desconectar un monitor, o volver de suspensión, ya no provoca un error interno en el fondo animado: espera a que Windows termine de reacomodar las pantallas.
+
 ## 1.1.3 — 18/11/2026
 - La ventana se abre centrada y entera dentro de la pantalla: antes la parte de abajo (y «Versión · Acerca de») quedaba tapada por la barra de tareas.
 

@@ -329,7 +329,13 @@ class DesktopWallpaper:
         visible = self._videos
         if not full and self.pause_when_covered:
             covered = _covered_monitors()
-            visible = [w for w in self._videos if self._monitor_of(w) not in covered]
+            try:
+                visible = [w for w in self._videos if self._monitor_of(w) not in covered]
+            except RuntimeError:
+                # Se apago o desconecto un monitor (o la PC volvio de suspension): Qt ya destruyo su
+                # QScreen pero _relayout aun no rehizo las pantallas (espera 1,5 s). Se espera a eso.
+                self._relayout.start()
+                return
             full = not visible
         if not full:
             self._route(visible)
