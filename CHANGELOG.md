@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.6 — 24/11/2026
+- «Pausar si lo tapan» ya no congela el fondo sin motivo: solo pausa cuando una ventana cubre de verdad la pantalla (antes bastaba con que alguna app, overlay o ventana invisible se declarara maximizada).
+- También pausa con juegos y videos en pantalla completa sin bordes, y detecta bien cada monitor aunque tengan distinto escalado.
+
 ## 1.1.5 — 19/11/2026
 - El fondo ya no se queda negro ni congelado en los monitores después de que se apaguen o entren en reposo: sigue animándose.
 

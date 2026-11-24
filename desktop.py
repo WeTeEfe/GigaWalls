@@ -59,18 +59,71 @@ def _find_workerw():
     return workerw or user32.FindWindowExW(progman, None, "WorkerW", None) or progman
 
 
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MONITORINFO)]
+user32.GetWindowLongW.restype = ctypes.c_long
+user32.GetLayeredWindowAttributes.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD),
+                                              ctypes.POINTER(ctypes.c_ubyte),
+                                              ctypes.POINTER(wintypes.DWORD)]
+
+# WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE: overlays y ventanas auxiliares que no tapan
+_IGNORED_EXSTYLE = 0x20 | 0x80 | 0x08000000
+_WS_EX_LAYERED = 0x80000
+
+
+def _frame_rect(hwnd):
+    """Rectangulo visible de la ventana (sin el borde invisible que Windows anade al maximizar)."""
+    r = wintypes.RECT()
+    if dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(r), ctypes.sizeof(r)) != 0:  # EXTENDED_FRAME_BOUNDS
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r
+
+
+def _invisible_layered(hwnd, exstyle):
+    """Ventana en capas totalmente transparente (overlays de juegos, grabadores, etc.)."""
+    if not exstyle & _WS_EX_LAYERED:
+        return False
+    alpha, flags = ctypes.c_ubyte(), wintypes.DWORD()
+    if not user32.GetLayeredWindowAttributes(hwnd, None, ctypes.byref(alpha), ctypes.byref(flags)):
+        return False
+    return bool(flags.value & 0x2) and alpha.value < 10  # LWA_ALPHA casi 0
+
+
 def _covered_monitors():
-    """Monitores que tienen una ventana normal maximizada (visible, no minimizada)."""
+    """Monitores que de verdad quedan tapados por una ventana maximizada o a pantalla completa.
+
+    No basta con IsZoomed: muchas apps (Spotify, overlays de NVIDIA/Steam/Discord, ventanas
+    auxiliares) se declaran maximizadas sin cubrir la pantalla o siendo invisibles, y con eso el
+    fondo quedaba en pausa para siempre. Se exige que la ventana cubra casi toda el area de trabajo."""
     covered = set()
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def enum(hwnd, _):
-        if (user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) and user32.IsZoomed(hwnd)
-                and _class_name(hwnd) not in SHELL_CLASSES):
-            cloaked = ctypes.c_int()  # ventanas de apps UWP ocultas siguen "visibles"
-            dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)
-            if not cloaked.value:
-                covered.add(user32.MonitorFromWindow(hwnd, 2))
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return True
+        if _class_name(hwnd) in SHELL_CLASSES:
+            return True
+        exstyle = user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF
+        if exstyle & _IGNORED_EXSTYLE or _invisible_layered(hwnd, exstyle):
+            return True
+        cloaked = ctypes.c_int()  # ventanas de apps UWP ocultas o de otro escritorio virtual
+        dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)
+        if cloaked.value:
+            return True
+        monitor = user32.MonitorFromWindow(hwnd, 2)
+        info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
+        if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return True
+        r, work = _frame_rect(hwnd), info.rcWork
+        ix = max(0, min(r.right, work.right) - max(r.left, work.left))
+        iy = max(0, min(r.bottom, work.bottom) - max(r.top, work.top))
+        area = (work.right - work.left) * (work.bottom - work.top)
+        if area > 0 and ix * iy >= 0.9 * area:
+            covered.add(monitor)
         return True
 
     user32.EnumWindows(enum, 0)
@@ -255,6 +308,11 @@ class DesktopWallpaper:
     @staticmethod
     def _monitor_of(w):
         """Monitor de Windows (HMONITOR) donde esta la pantalla de video `w`."""
+        # Por su propio HWND: calcularlo desde la geometria de Qt falla con monitores de distinto
+        # escalado (Qt no escala la esquina de cada pantalla).
+        monitor = user32.MonitorFromWindow(w.hwnd, 2) if user32.IsWindow(w.hwnd) else None
+        if monitor:
+            return monitor
         g = w.target_screen.geometry()
         r = w.target_screen.devicePixelRatio()
         pt = wintypes.POINT(int((g.x() + g.width() / 2) * r), int((g.y() + g.height() / 2) * r))
