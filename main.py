@@ -36,7 +36,7 @@ import moewalls
 import motionbgs
 import optimize
 import traducir
-from desktop import DesktopWallpaper
+from desktop import DesktopWallpaper, minimizar_ventanas, restaurar_ventanas
 from instalacion import INSTALACION, _caja  # _caja: cuadros con el estilo de la app
 from theme import STYLE, badge, rounded
 
@@ -303,6 +303,11 @@ def search_sources(names, query, page):
     return merged, errors
 
 
+def titulo_video(path):
+    """Nombre legible del video a partir del archivo."""
+    return os.path.splitext(os.path.basename(path))[0].replace("-", " ").title()
+
+
 def make_thumb(video_path):
     os.makedirs(THUMBS, exist_ok=True)
     thumb = os.path.join(THUMBS, os.path.basename(video_path) + ".jpg")
@@ -449,6 +454,7 @@ class MainWindow(QMainWindow):
         self.query = ""
         self._busy = False  # una sola descarga/conversión a la vez
         self._gen = 0  # identifica la búsqueda en curso
+        self._volver = False  # el aviso de la bandeja devuelve las ventanas minimizadas al aplicar
         self.exhausted = False
         self.page = 0
         self.loading = False
@@ -891,7 +897,7 @@ class MainWindow(QMainWindow):
         final = optimize.flipped_name(dest, modes) if modes else dest
         if os.path.exists(final):
             if use:
-                self.set_wallpaper(final)
+                self.set_wallpaper(final, mostrar=True)
             else:
                 self.status.showMessage("Ya está en tu biblioteca", 5000)
             return
@@ -925,7 +931,7 @@ class MainWindow(QMainWindow):
 
     def _on_downloaded(self, dest, use, modes=""):
         if not modes:
-            self._optimize(dest, lambda: self.set_wallpaper(dest) if use else None)
+            self._optimize(dest, lambda: self.set_wallpaper(dest, mostrar=True) if use else None)
             return
         # reflejar y optimizar en una sola conversión; el original sin reflejar no se guarda
         eco = self.settings.get("eco", False)
@@ -937,14 +943,14 @@ class MainWindow(QMainWindow):
             self.refresh_library()
             self.status.showMessage("Listo y reflejado", 6000)
             if use:
-                self.set_wallpaper(out)
+                self.set_wallpaper(out, mostrar=True)
 
         def failed(err):  # queda el original descargado, sin reflejar
             self._end()
             self.refresh_library()
             self.status.showMessage(f"No se pudo reflejar ({err}); quedó el original en tu biblioteca", 8000)
             if use:
-                self.set_wallpaper(dest)
+                self.set_wallpaper(dest, mostrar=True)
 
         self.pool.start(Worker(
             lambda progress: optimize.optimize_flipped(dest, modes, progress, eco), done, failed,
@@ -976,7 +982,7 @@ class MainWindow(QMainWindow):
         def done(out):
             self._end()
             self.refresh_library()
-            self.set_wallpaper(out)
+            self.set_wallpaper(out, mostrar=True)
 
         def failed(err):
             self._end()
@@ -1013,7 +1019,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(top)
 
         self.library = self._make_grid()
-        self.library.itemDoubleClicked.connect(lambda it: self.set_wallpaper(it.data(Qt.UserRole)))
+        self.library.itemDoubleClicked.connect(lambda it: self.set_wallpaper(it.data(Qt.UserRole), mostrar=True))
         lay.addWidget(self.library)
         self.lib_info = QLabel(objectName="libinfo")
         lay.addWidget(self.lib_info)
@@ -1036,7 +1042,7 @@ class MainWindow(QMainWindow):
         delete = QPushButton("Eliminar", objectName="danger")
         delete.clicked.connect(lambda: self._lib_action(self.delete_wallpaper))
         use = QPushButton("Usar como fondo", objectName="primary")
-        use.clicked.connect(lambda: self._lib_action(self.set_wallpaper))
+        use.clicked.connect(lambda: self._lib_action(lambda p: self.set_wallpaper(p, mostrar=True)))
         for b in (tools, fav, flip):
             row.addWidget(b)
         row.addStretch()
@@ -1193,13 +1199,35 @@ class MainWindow(QMainWindow):
                                lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
 
     # ---------- fondo ----------
-    def set_wallpaper(self, path):
+    def set_wallpaper(self, path, mostrar=False):
+        """mostrar: lo eligió el usuario (no la rotación): se confirma y se deja ver el escritorio."""
         self.wallpaper.set_video(path)
         self.settings["current"] = path
         save_settings(self.settings)
         self._update_now_playing()
         self.status.showMessage("Fondo aplicado", 5000)
         self.ensure_profile(path)
+        if mostrar:  # un momento para que el video arranque antes de destapar el escritorio
+            QTimer.singleShot(700, lambda: self._mostrar_fondo(path))
+
+    def _mostrar_fondo(self, path):
+        """Confirma con un aviso que el fondo quedó instalado. Si la ventana estaba a la vista, la manda
+        a la bandeja y minimiza las demás para que se vea el escritorio; tocar el aviso las devuelve."""
+        if self.settings.get("current") != path:
+            return  # ya se cambió por otro
+        texto = f"«{titulo_video(path)}» ya está en tu escritorio."
+        if self.isVisible():
+            self.hide()
+            minimizar_ventanas()
+            self._volver = True
+            texto += "\nHaz clic aquí para volver a tus ventanas."
+        self.tray.showMessage("Fondo instalado ✔", texto, QIcon(ICON_PATH), 6000)
+
+    def _aviso_tocado(self):
+        if self._volver:
+            self._volver = False
+            restaurar_ventanas()
+            QTimer.singleShot(300, self.show_window)  # después de que vuelvan las demás, encima de ellas
 
     def ensure_profile(self, path):
         """Si el fondo supera el perfil elegido (bajado antes de activar el modo ahorro, una copia
@@ -1267,7 +1295,7 @@ class MainWindow(QMainWindow):
             cover = QPixmap(thumb).scaled(NOW_THUMB, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             cover = cover.copy((cover.width() - NOW_THUMB.width()) // 2, 0, NOW_THUMB.width(), NOW_THUMB.height())
             self.now_thumb.setPixmap(rounded(cover))
-            self.now_title.setText(os.path.splitext(os.path.basename(current))[0].replace("-", " ").title())
+            self.now_title.setText(titulo_video(current))
         else:
             self.now_thumb.clear()
             self.now_thumb.setText("Sin fondo animado")
@@ -1313,6 +1341,7 @@ class MainWindow(QMainWindow):
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
             lambda r: self.show_window() if r == QSystemTrayIcon.Trigger else None)
+        self.tray.messageClicked.connect(self._aviso_tocado)
         self.tray.show()
 
     def _about(self):
@@ -1342,6 +1371,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):  # cerrar = minimizar a la bandeja
         event.ignore()
         self.hide()
+        self._volver = False
         self.tray.showMessage(DISPLAY_NAME, "Sigue en la bandeja del sistema.",
                               QSystemTrayIcon.Information, 2000)
 

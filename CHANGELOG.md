@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.7 — 24/11/2026
+- Al poner un fondo, un aviso confirma que quedó instalado y se minimizan las ventanas para que lo veas en el escritorio. Haz clic en el aviso para que tus ventanas vuelvan.
+- La rotación automática y «Siguiente fondo» cambian el fondo sin minimizar nada.
+
 ## 1.1.6 — 24/11/2026
 - «Pausar si lo tapan» ya no congela el fondo sin motivo: solo pausa cuando una ventana cubre de verdad la pantalla (antes bastaba con que alguna app, overlay o ventana invisible se declarara maximizada).
 - También pausa con juegos y videos en pantalla completa sin bordes, y detecta bien cada monitor aunque tengan distinto escalado.

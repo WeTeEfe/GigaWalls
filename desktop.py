@@ -32,6 +32,25 @@ SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"
 # QUNS_BUSY (pantalla completa), QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
 FULLSCREEN_STATES = {2, 3, 4}
 
+# comandos de la barra de tareas: «Minimizar todo» y deshacerlo (lo mismo que Win+M / Win+Shift+M)
+_MINIMIZAR_TODO, _DESHACER_MINIMIZAR = 419, 416
+
+
+def _barra_tareas(comando):
+    barra = user32.FindWindowW("Shell_TrayWnd", None)
+    if barra:
+        user32.PostMessageW(barra, 0x0111, comando, 0)  # WM_COMMAND
+
+
+def minimizar_ventanas():
+    """Minimiza todas las ventanas para que se vea el escritorio con el fondo nuevo."""
+    _barra_tareas(_MINIMIZAR_TODO)
+
+
+def restaurar_ventanas():
+    """Devuelve las ventanas que minimizó minimizar_ventanas()."""
+    _barra_tareas(_DESHACER_MINIMIZAR)
+
 
 def _find_workerw():
     """Devuelve el HWND del WorkerW que queda detras de los iconos, o None si el escritorio del
