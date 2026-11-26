@@ -203,10 +203,48 @@ def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
     return elegido["texto"]
 
 
+_PUENTES = set()  # puentes hilo -> Qt vivos (si no se guardan, Python los borra antes de que respondan)
+
+
+def _en_hilo(fn, listo, progreso=None):
+    """Corre fn() en un hilo aparte y llama listo(resultado, error) en el hilo de Qt.
+    fn puede recibir `avance(hecho, total)` si se pasa `progreso` (también se llama en el hilo de Qt)."""
+    import threading
+    from PySide6.QtCore import QObject, Signal
+
+    class _Puente(QObject):
+        hecho = Signal(object, object)
+        avance = Signal(object, object)
+
+    p = _Puente()
+    _PUENTES.add(p)
+    p.hecho.connect(lambda r, e: (_PUENTES.discard(p), listo(r, e)))
+    if progreso:
+        p.avance.connect(progreso)
+
+    def correr():
+        try:
+            r, e = (fn(p.avance.emit) if progreso else fn()), None
+        except Exception as ex:  # noqa: BLE001
+            r, e = None, ex
+        try:
+            p.hecho.emit(r, e)
+        except RuntimeError:
+            pass  # la app ya se cerró mientras el hilo trabajaba: nadie espera la respuesta
+    threading.Thread(target=correr, daemon=True).start()
+
+
+def _pedir_github(url, timeout=20):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                               "User-Agent": "GigaTech-actualizador"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 class Instalacion:
     def __init__(self, titulo, exe, clave, valor_run, version, arg_inicio="--minimized",
                  descripcion="", datos=(), acento=None, conserva="Tus ajustes", modo="exe", arranque=True,
-                 bandeja=True, nota_desinstalar=""):
+                 bandeja=True, nota_desinstalar="", repo=None):
         self.titulo = titulo            # nombre visible: «GigaWalls»
         self.exe_nombre = exe           # «GigaWalls.exe»
         self.clave = clave              # subclave en «Aplicaciones instaladas»
@@ -220,6 +258,11 @@ class Instalacion:
         self.arranque = arranque        # al instalar, que arranque con Windows
         self.bandeja = bandeja          # la app tiene ícono junto al reloj (con «Desinstalar…»)
         self.nota_desinstalar = nota_desinstalar  # lo que se aclara al desinstalar («Tus videos no se borran»)
+        self.repo = repo                # «Usuario/Repo» público de GitHub con las versiones en Releases
+        self._buscando = False
+        self._pospuesta = None          # versión a la que se respondió «Más tarde» (no se vuelve a avisar sola)
+        self._reloj = None
+        self.salir = None               # la app pone aquí su salida ordenada (se usa al actualizar)
         if acento:                      # color del botón principal de los cuadros (el de la app)
             global _ACENTO
             _ACENTO = acento
@@ -516,11 +559,205 @@ class Instalacion:
         else:
             donde = "Ejecutándose desde el código fuente"
         detalle = "\n\n".join(p for p in (self.descripcion or self.titulo, extra, donde, "© GigaTech") if p)
-        elegido = _caja(QMessageBox.Information, f"Acerca de {self.titulo}", self.titulo, detalle,
-                        [("Cerrar", QMessageBox.AcceptRole), ("Novedades…", QMessageBox.ActionRole)],
+        botones = [("Cerrar", QMessageBox.AcceptRole), ("Novedades…", QMessageBox.ActionRole)]
+        if self.repo:
+            botones.append(("Buscar actualizaciones", QMessageBox.ActionRole))
+        elegido = _caja(QMessageBox.Information, f"Acerca de {self.titulo}", self.titulo, detalle, botones,
                         f"Versión {self.version}")
         if elegido == "Novedades…":
             self.ver_novedades()
+        elif elegido == "Buscar actualizaciones":
+            self.buscar_actualizacion(manual=True)
+
+    # ---------- actualizar desde GitHub ----------
+    def ultima_version(self):
+        """La versión publicada más nueva en GitHub Releases: dict con version, notas (lista de cambios),
+        url y tamano del instalador (y sha256 si GitHub lo da). Lanza una excepción si no se puede consultar."""
+        import json
+        with _pedir_github(f"https://api.github.com/repos/{self.repo}/releases/latest") as r:
+            datos = json.load(r)
+        archivo = next((a for a in datos.get("assets", []) if a["name"].lower() == self.exe_nombre.lower()), None)
+        if not archivo:
+            raise RuntimeError(f"La versión publicada no trae {self.exe_nombre}.")
+        digest = archivo.get("digest") or ""
+        return {
+            "version": datos["tag_name"].lstrip("vV"),
+            "notas": [l.strip()[2:].strip() for l in (datos.get("body") or "").splitlines()
+                      if l.strip().startswith("- ")],
+            "url": archivo["browser_download_url"],
+            "tamano": archivo.get("size") or 0,
+            "sha256": digest.split(":", 1)[1] if digest.startswith("sha256:") else "",
+        }
+
+    def actualizar_automaticamente(self, primera=20, cada_horas=6):
+        """Revisa en segundo plano a los `primera` segundos y luego cada `cada_horas` (la app puede quedar
+        abierta días). Solo la copia instalada; avisa únicamente si hay una versión nueva."""
+        if not self.repo or not self.corriendo_instalada:
+            return
+        import glob
+        import tempfile
+        from PySide6.QtCore import QTimer
+        # instaladores que bajó una actualización anterior (~200 MB cada uno); el que siga en uso no se borra
+        for viejo in glob.glob(os.path.join(tempfile.gettempdir(), f"{os.path.splitext(self.exe_nombre)[0]}-*.exe")):
+            try:
+                os.remove(viejo)
+            except OSError:
+                pass
+        QTimer.singleShot(primera * 1000, self.buscar_actualizacion)
+        self._reloj = QTimer()
+        self._reloj.timeout.connect(self.buscar_actualizacion)
+        self._reloj.start(int(cada_horas * 3600 * 1000))
+
+    def buscar_actualizacion(self, manual=False):
+        """Consulta GitHub sin congelar la app. `manual` («Buscar actualizaciones ahora»): siempre responde,
+        también si ya está al día o no hay Internet; la búsqueda automática solo habla si hay algo nuevo."""
+        from PySide6.QtWidgets import QMessageBox
+        ok = [("Entendido", QMessageBox.AcceptRole)]
+        if not self.repo or self._buscando:
+            return
+        if not self.corriendo_instalada:
+            if manual:
+                _caja(QMessageBox.Information, "Buscar actualizaciones", "Esta copia no está instalada",
+                      "Solo la copia instalada se actualiza sola. Instálala con el instalador de "
+                      f"{self.titulo} y desde ahí se mantendrá al día.", ok, f"Versión {self.version}")
+            return
+        self._buscando = True
+
+        def listo(info, error):
+            self._buscando = False
+            if error:
+                if manual:
+                    _caja(QMessageBox.Information, "Buscar actualizaciones", "No se pudo revisar ahora",
+                          "Revisa tu conexión a Internet e inténtalo de nuevo en un rato.\n\n"
+                          f"Detalle: {error}", ok, f"Versión {self.version}")
+                return
+            if _version(info["version"]) <= _version(self.version):
+                if manual:
+                    _caja(QMessageBox.Information, "Buscar actualizaciones", "Ya tienes la versión más actual",
+                          f"{self.titulo} revisa solo cada pocas horas y te avisa cuando salga una nueva.",
+                          ok, f"✔  {self.version} instalada")
+                return
+            if not manual and self._pospuesta == info["version"]:
+                return  # ya dijo «Más tarde» a esta versión: no insistir hasta que la pida o salga otra
+            self._ofrecer_actualizacion(info)
+
+        _en_hilo(self.ultima_version, listo)
+
+    def _ofrecer_actualizacion(self, info):
+        from PySide6.QtWidgets import QMessageBox
+        nueva = info["version"]
+        mb = f" ({info['tamano'] / 1e6:.0f} MB)" if info["tamano"] else ""
+        elegido = _caja(
+            QMessageBox.Question, f"Actualizar {self.titulo}", f"Hay una versión nueva de {self.titulo}",
+            f"Se descarga{mb}, se cierra {self.titulo} un momento y se abre la versión nueva. "
+            f"{self.conserva} se conservan." + (" Esto es lo nuevo:" if info["notas"] else ""),
+            [("Actualizar", QMessageBox.AcceptRole), ("Más tarde", QMessageBox.RejectRole)],
+            f"{self.version}  →  {nueva}", lista=[(nueva, "", info["notas"])] if info["notas"] else None)
+        if elegido != "Actualizar":
+            self._pospuesta = nueva
+            return
+        self._descargar_e_instalar(info)
+
+    def _descargar(self, info, destino, avance, cancelado):
+        """Baja el instalador a `destino` (en el hilo aparte) y comprueba que llegó completo."""
+        import hashlib
+        h, hecho, parcial = hashlib.sha256(), 0, destino + ".parcial"
+        try:
+            with _pedir_github(info["url"], timeout=60) as r, open(parcial, "wb") as f:
+                total = int(r.headers.get("Content-Length") or info["tamano"] or 0)
+                while True:
+                    if cancelado():
+                        raise InterruptedError("cancelado")
+                    bloque = r.read(1 << 18)
+                    if not bloque:
+                        break
+                    f.write(bloque)
+                    h.update(bloque)
+                    hecho += len(bloque)
+                    avance(hecho, total)
+            if total and hecho != total:
+                raise RuntimeError(f"La descarga quedó incompleta ({hecho} de {total} bytes).")
+            if info["sha256"] and h.hexdigest().lower() != info["sha256"].lower():
+                raise RuntimeError("El archivo descargado no coincide con el publicado (sha256).")
+            os.replace(parcial, destino)
+        except BaseException:
+            try:
+                os.remove(parcial)  # no dejar 200 MB a medias en Temp
+            except OSError:
+                pass
+            raise
+        return destino
+
+    def _descargar_e_instalar(self, info):
+        """Ventana con barra de progreso mientras baja; al terminar abre el instalador en modo «--instalar»
+        (reemplaza la carpeta, conserva los ajustes y abre la copia nueva) y cierra esta."""
+        import tempfile
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
+                                       QPushButton, QVBoxLayout)
+        destino = os.path.join(tempfile.gettempdir(), f"{os.path.splitext(self.exe_nombre)[0]}-{info['version']}.exe")
+        d = QDialog()
+        d.setWindowTitle(f"Actualizar {self.titulo}")
+        d.setWindowFlags(d.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        d.setMinimumWidth(460)
+        d.setStyleSheet(f"""
+            QDialog {{ background: #141824; }}
+            QLabel {{ color: #e6e8f0; font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
+            QLabel#titulo {{ font-size: 17px; font-weight: 700; color: #ffffff; }}
+            QLabel#detalle {{ color: #8a90a6; }}
+            QProgressBar {{ background: #1d2130; border: 1px solid #2c3249; border-radius: 6px; height: 12px;
+                            text-align: center; color: transparent; }}
+            QProgressBar::chunk {{ background: {_ACENTO}; border-radius: 5px; }}
+            QPushButton {{ font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
+                           background: #1d2130; border: 1px solid #2c3249; border-radius: 10px;
+                           padding: 8px 18px; min-width: 90px; }}
+            QPushButton:hover {{ background: #262b3f; border-color: #3a4160; }}
+        """)
+        raiz = QVBoxLayout(d)
+        raiz.setContentsMargins(26, 22, 26, 20)
+        raiz.setSpacing(12)
+        raiz.addWidget(QLabel(f"Descargando {self.titulo} {info['version']}…", objectName="titulo"))
+        barra = QProgressBar()
+        barra.setRange(0, 0)  # sin total aún: animación de espera
+        raiz.addWidget(barra)
+        estado = QLabel("Conectando…", objectName="detalle")
+        raiz.addWidget(estado)
+        fila = QHBoxLayout()
+        fila.addStretch()
+        cancelar = QPushButton("Cancelar")
+        cancelar.setCursor(Qt.PointingHandCursor)
+        fila.addWidget(cancelar)
+        raiz.addLayout(fila)
+        _barra_oscura(d)
+        resultado = {"cancelado": False, "error": None, "listo": False}
+        cancelar.clicked.connect(lambda: (resultado.update(cancelado=True), d.reject()))
+
+        def avance(hecho, total):
+            if total:
+                barra.setRange(0, 1000)
+                barra.setValue(int(1000 * hecho / total))
+                estado.setText(f"{hecho / 1e6:.0f} de {total / 1e6:.0f} MB")
+
+        def listo(_, error):
+            resultado.update(listo=error is None, error=error)
+            d.accept()
+
+        _en_hilo(lambda av: self._descargar(info, destino, av, lambda: resultado["cancelado"]), listo, avance)
+        d.exec()
+        if resultado["cancelado"]:
+            return
+        if not resultado["listo"]:
+            _caja(QMessageBox.Information, f"Actualizar {self.titulo}", "No se pudo descargar la actualización",
+                  f"{self.titulo} sigue funcionando con la versión {self.version}. Puedes intentarlo de nuevo "
+                  f"desde «Buscar actualizaciones».\n\nDetalle: {resultado['error']}",
+                  [("Entendido", QMessageBox.AcceptRole)], f"{self.version}  →  {info['version']}")
+            return
+        env = {k: v for k, v in os.environ.items() if k != "_MEIPASS2" and not k.startswith("_PYI")}
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        subprocess.Popen([destino, "--instalar"], env=env, cwd=tempfile.gettempdir(), close_fds=True,
+                         creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW)
+        # la salida ordenada de la app si la dio (detener el fondo, etc.); el instalador igual cierra lo que quede
+        (self.salir or QApplication.instance().quit)()
 
     # ---------- desinstalar ----------
     def quitar(self):
@@ -582,11 +819,12 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.1.8",
+    version="1.1.9",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",
     conserva="Tus ajustes y tu biblioteca",
     modo="carpeta",                  # Release = instalador (instalador.py); la app instalada es una carpeta
     nota_desinstalar="Los videos de tu biblioteca (Videos\\GigaWalls) no se borran.",
+    repo="WeTeEfe/GigaWalls",        # las copias instaladas se actualizan desde sus Releases
 )

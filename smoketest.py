@@ -146,6 +146,21 @@ def run(main, out_path):
         return f"{win.library.count()} videos en la biblioteca"
     check("abrir biblioteca", biblioteca)
 
+    def actualizaciones():
+        # lo mismo que hace la copia instalada: consulta GitHub en un hilo (prueba también el SSL del .exe)
+        from instalacion import INSTALACION, _en_hilo
+        r = {}
+        _en_hilo(INSTALACION.ultima_version, lambda info, error: r.update(info=info, error=error))
+        if not _esperar(lambda: r, 20):
+            raise RuntimeError("GitHub no respondió en 20 s")
+        if r["error"]:
+            raise r["error"]
+        info = r["info"]
+        if not info["url"].endswith("/" + INSTALACION.exe_nombre) or info["tamano"] < 10_000_000:
+            raise RuntimeError(f"instalador publicado raro: {info['url']} ({info['tamano']} bytes)")
+        return f"última publicada {info['version']} ({info['tamano'] / 1e6:.0f} MB), esta {INSTALACION.version}"
+    check("buscar actualizaciones en GitHub", actualizaciones)
+
     win.tray.hide()
     win.hide()
     win._gen += 1  # que las miniaturas que sigan llegando se descarten

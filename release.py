@@ -7,6 +7,8 @@
   4. Repite la prueba con la app ya compilada (detecta lo que falte en el empaquetado) y revisa el paquete
      del instalador (--probar).
   5. Copia el instalador a Desktop\\Release y guarda la versión en git (commit + etiqueta).
+  6. Sube el código a GitHub (WeTeEfe/GigaWalls) y publica el instalador en Releases: desde ahí se
+     actualizan solas las copias instaladas («Buscar actualizaciones»).
 
 Si algo falla se detiene, deja la versión como estaba y no toca Release.
 Uso: python release.py [versión]   (o doble clic en release.bat)
@@ -105,8 +107,45 @@ def main():
     git("tag", "-f", f"v{nueva}")
     print(git("log", "--oneline", "-1").stdout.strip())
 
-    print(f"\nLISTO: GigaWalls {nueva} publicado y probado.")
+    paso("Publicando en GitHub (las copias instaladas se actualizan desde aquí)")
+    try:
+        publicar_github(nueva)
+    except Exception as e:  # noqa: BLE001
+        print(f"\nOJO: quedó en Release y en git local, pero NO en GitHub: {e}\n"
+              f"Cuando se arregle: git push origin main --tags y gh release create v{nueva} ...")
+        return 1
+
+    print(f"\nLISTO: GigaWalls {nueva} publicado, probado y disponible para actualizar.")
     return 0
+
+
+def notas(version):
+    """Las líneas «- cambio» de CHANGELOG.md de esa versión (el texto de la versión en GitHub)."""
+    with open(os.path.join(AQUI, "CHANGELOG.md"), encoding="utf-8") as f:
+        texto = f.read()
+    m = re.search(rf"^##\s+{re.escape(version)}\b.*?\n(.*?)(?=^##\s|\Z)", texto, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def publicar_github(version):
+    """Sube el código y crea la versión en GitHub Releases con el instalador (GigaWalls.exe): es lo que
+    descarga «Buscar actualizaciones» en las PCs donde está instalado."""
+    def correr(*args):
+        r = subprocess.run(args, cwd=AQUI, capture_output=True, text=True, encoding="utf-8")
+        if r.returncode:
+            raise RuntimeError(f"{' '.join(args[:3])}: {(r.stderr or r.stdout).strip()[:300]}")
+        return r.stdout.strip()
+
+    correr("git", "push", "origin", "main")
+    correr("git", "push", "-f", "origin", f"v{version}")
+    archivo = os.path.join(AQUI, "notas_release.md")
+    with open(archivo, "w", encoding="utf-8") as f:
+        f.write(notas(version) + "\n")
+    try:
+        print(correr("gh", "release", "create", f"v{version}", INSTALADOR, "--title", f"GigaWalls {version}",
+                     "--notes-file", archivo, "--latest"))
+    finally:
+        os.remove(archivo)
 
 
 if __name__ == "__main__":

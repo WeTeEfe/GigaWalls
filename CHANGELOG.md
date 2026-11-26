@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.9 — 26/11/2026
+- GigaWalls se actualiza solo: revisa al abrir y cada 6 horas si hay una versión nueva, te avisa, la descarga y se vuelve a abrir actualizado, con tus ajustes y tu biblioteca intactos.
+- «Buscar actualizaciones ahora» en el menú del ícono junto al reloj y en «Acerca de», para revisar en el momento.
+
 ## 1.1.8 — 26/11/2026
 - El fondo ya no se pausa al minimizar todo cuando está instalado el overlay de NVIDIA GeForce: Windows lo confundía con una app a pantalla completa.
 

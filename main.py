@@ -1332,6 +1332,9 @@ class MainWindow(QMainWindow):
         novedades = QAction("Novedades…", self)
         novedades.triggered.connect(INSTALACION.ver_novedades)
         menu.addAction(novedades)
+        buscar = QAction("Buscar actualizaciones ahora", self)
+        buscar.triggered.connect(lambda: INSTALACION.buscar_actualizacion(manual=True))
+        menu.addAction(buscar)
         if INSTALACION.corriendo_instalada:  # solo si es la copia instalada
             uninstall = QAction("Desinstalar de esta PC…", self)
             uninstall.triggered.connect(self._uninstall)
@@ -1699,6 +1702,8 @@ def main():
     if "--minimized" not in sys.argv:
         win.show()
     QTimer.singleShot(1500, INSTALACION.avisar_novedades)  # «se instaló / se actualizó: esto es lo nuevo» (una vez)
+    INSTALACION.salir = win._quit  # al actualizar se cierra igual que con «Salir»
+    INSTALACION.actualizar_automaticamente()  # revisa GitHub a los 20 s y luego cada 6 h (solo la copia instalada)
     code = app.exec()
     # Todo se guarda en el momento (ajustes, biblioteca) y el fondo ya se detuvo en _quit. Salir ya,
     # sin esperar a peticiones de red lentas que mantendrían el proceso vivo (e invisible) un buen rato.
