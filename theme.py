@@ -139,9 +139,10 @@ QScrollBar::handle:vertical { background: #3a4060; }
 QScrollBar::handle:vertical:hover { background: #7c5cff; }
 QMenu::item:selected { background: #e9e3ff; color: #3b2a99; }
 
-/* etiquetas de búsqueda rápida (bajo el buscador) */
-QPushButton#tag { background: #1a1d2b; border: 1px solid #333a58; border-radius: 15px; padding: 6px 14px;
-                  color: #dfe2ee; font-weight: 600; }
+/* etiquetas de búsqueda rápida (barra lateral) */
+QScrollArea#tagsarea, QWidget#tags { background: transparent; border: none; }
+QPushButton#tag { background: #1a1d2b; border: 1px solid #333a58; border-radius: 14px; padding: 6px 4px;
+                  color: #dfe2ee; font-weight: 600; font-size: 13px; }
 QPushButton#tag:hover { background: #2a2650; border-color: #8f73ff; color: #ffffff; }
 QPushButton#tag:checked { background: #e9e3ff; border-color: #e9e3ff; color: #3b2a99; }
 """

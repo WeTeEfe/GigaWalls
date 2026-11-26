@@ -25,7 +25,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGraphicsScene, QGraphicsView,
     QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 import desktophut
@@ -304,6 +304,7 @@ class _Flujo(QLayout):
         return s
 
     def _acomodar(self, rect, probar):
+        rect = rect.marginsRemoved(self.contentsMargins())
         x, y, alto_fila = rect.x(), rect.y(), 0
         for it in self._items:
             hint = it.sizeHint()
@@ -313,7 +314,7 @@ class _Flujo(QLayout):
                 it.setGeometry(QRect(QPoint(x, y), hint))
             x += hint.width() + self._espacio
             alto_fila = max(alto_fila, hint.height())
-        return y + alto_fila - rect.y()
+        return y + alto_fila - rect.y() + self.contentsMargins().top() + self.contentsMargins().bottom()
 
 
 def cargar_fuente(app):
@@ -600,7 +601,48 @@ class MainWindow(QMainWindow):
         group.idClicked.connect(self._goto_page)
         self.nav_group = group
 
-        lay.addStretch()  # las etiquetas de búsqueda están en el catálogo, bajo el buscador
+        # Etiquetas de búsqueda rápida en el espacio entre el menú y «En tu escritorio»: grilla pareja de 2
+        # columnas con las primeras 7 y «＋ Más» con el resto. Si la ventana es muy baja, la zona se desplaza
+        # con la rueda en vez de aplastar lo de abajo.
+        lay.addWidget(QLabel("EXPLORAR", objectName="section"))
+        area = QScrollArea(objectName="tagsarea")
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        area.viewport().setAutoFillBackground(False)
+        etiquetas = QWidget(objectName="tags")
+        grilla = QGridLayout(etiquetas)
+        grilla.setContentsMargins(6, 2, 6, 4)
+        grilla.setSpacing(6)
+        grilla.setAlignment(Qt.AlignTop)
+        self.tag_chips = []
+        visibles, resto = EXPLORE[:7], EXPLORE[7:]
+        for i, (label, term) in enumerate(visibles):
+            chip = QPushButton(label, objectName="tag", checkable=True)
+            chip.setProperty("term", term)
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.clicked.connect(lambda _=False, t=term: self._explore(t))
+            chip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)  # mitad y mitad, sin desbordar
+            grilla.addWidget(chip, i // 2, i % 2)
+            self.tag_chips.append(chip)
+        self.tag_mas = QPushButton("＋  Más", objectName="tag", checkable=True)
+        self.tag_mas.setCursor(Qt.PointingHandCursor)
+        menu = QMenu(self.tag_mas)
+        for label, term in resto:
+            menu.addAction(label, lambda t=term: self._explore(t))
+        # el menú se abre al hacer clic (sin la flechita de QPushButton.setMenu)
+        self.tag_mas.clicked.connect(lambda: (self.tag_mas.setChecked(self._tag_extra is not None),
+                                              menu.exec(self.tag_mas.mapToGlobal(self.tag_mas.rect().bottomLeft()))))
+        self._tags_resto = dict((t, l) for l, t in resto)
+        self._tag_extra = None
+        self.tag_mas.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        grilla.addWidget(self.tag_mas, len(visibles) // 2, len(visibles) % 2)
+        grilla.setColumnStretch(0, 1)
+        grilla.setColumnStretch(1, 1)
+        area.setWidget(etiquetas)
+        area.setMinimumHeight(40)  # en ventanas bajas se achica esto (y se desplaza), no «En tu escritorio»
+        lay.addWidget(area, 1)
+        lay.addSpacing(8)
 
         card = QFrame(objectName="nowcard")
         cl = QVBoxLayout(card)
@@ -647,6 +689,7 @@ class MainWindow(QMainWindow):
         self.rotation_box.currentIndexChanged.connect(self._on_rotation_changed)
         cl.addWidget(self.rotation_box)
         self._mark_rotation()
+        card.setMinimumHeight(card.sizeHint().height())  # nunca aplastada (se encimaba la miniatura)
         lay.addWidget(card)
         lay.addSpacing(6)
 
@@ -772,18 +815,6 @@ class MainWindow(QMainWindow):
         row.addWidget(btn)
         lay.addLayout(row)
 
-        # etiquetas de búsqueda rápida: una fila bajo el buscador (pasa a dos si la ventana es angosta)
-        etiquetas = QWidget()
-        flujo = _Flujo(etiquetas, espacio=8)
-        self.tag_chips = []
-        for label, term in EXPLORE:
-            chip = QPushButton(label, objectName="tag", checkable=True)
-            chip.setProperty("term", term)
-            chip.setCursor(Qt.PointingHandCursor)
-            chip.clicked.connect(lambda _=False, t=term: self._explore(t))
-            flujo.addWidget(chip)
-            self.tag_chips.append(chip)
-        lay.addWidget(etiquetas)
 
         self.results = self._make_grid()
         self.results.itemDoubleClicked.connect(self.preview)  # ver antes de descargar
@@ -831,6 +862,10 @@ class MainWindow(QMainWindow):
         self.query = query
         for chip in getattr(self, "tag_chips", ()):  # resalta la etiqueta si la búsqueda es la suya
             chip.setChecked(chip.property("term") == query.lower())
+        if hasattr(self, "tag_mas"):  # una de las de «Más»: el botón la muestra y queda resaltado
+            self._tag_extra = self._tags_resto.get(query.lower())
+            self.tag_mas.setText(self._tag_extra or "＋  Más")
+            self.tag_mas.setChecked(self._tag_extra is not None)
         self.page = 0
         self.exhausted = False
         self._gen += 1  # descarta resultados de busquedas anteriores que sigan en vuelo

@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.2 — 26/11/2026
+- Las etiquetas de búsqueda vuelven a la barra lateral y llenan el espacio que quedaba vacío: 7 a la vista en dos columnas y «＋ Más» con el resto. El catálogo empieza directo en los fondos.
+- «En tu escritorio» ya no se aplasta en ventanas bajas.
+
 ## 1.2.1 — 26/11/2026
 - Vuelve el negro, ahora con más vida: tarjetas con relieve que se despegan del fondo y se iluminan en morado al pasar el mouse, toques lavanda claros, botones con degradado y un brillo morado en la barra lateral.
 - Letra nueva: Nunito, más redonda y amigable. Viene dentro de la app, así que se ve igual en cualquier PC.
