@@ -628,8 +628,11 @@ class MainWindow(QMainWindow):
         self.tag_mas = QPushButton("＋  Más", objectName="tag", checkable=True)
         self.tag_mas.setCursor(Qt.PointingHandCursor)
         menu = QMenu(self.tag_mas)
+        self._acciones_mas = {}
         for label, term in resto:
-            menu.addAction(label, lambda t=term: self._explore(t))
+            accion = menu.addAction(label, lambda t=term: self._explore(t))
+            accion.setCheckable(True)  # la activa sale con ✔ al abrir el menú
+            self._acciones_mas[term] = accion
         # el menú se abre al hacer clic (sin la flechita de QPushButton.setMenu)
         self.tag_mas.clicked.connect(lambda: (self.tag_mas.setChecked(self._tag_extra is not None),
                                               menu.exec(self.tag_mas.mapToGlobal(self.tag_mas.rect().bottomLeft()))))
@@ -862,10 +865,12 @@ class MainWindow(QMainWindow):
         self.query = query
         for chip in getattr(self, "tag_chips", ()):  # resalta la etiqueta si la búsqueda es la suya
             chip.setChecked(chip.property("term") == query.lower())
-        if hasattr(self, "tag_mas"):  # una de las de «Más»: el botón la muestra y queda resaltado
+        if hasattr(self, "tag_mas"):  # una de las de «Más»: el botón sigue diciendo «Más», pero resaltado
             self._tag_extra = self._tags_resto.get(query.lower())
-            self.tag_mas.setText(self._tag_extra or "＋  Más")
             self.tag_mas.setChecked(self._tag_extra is not None)
+            self.tag_mas.setToolTip(f"Mostrando: {self._tag_extra}" if self._tag_extra else "Más categorías")
+            for term, accion in self._acciones_mas.items():
+                accion.setChecked(term == query.lower())
         self.page = 0
         self.exhausted = False
         self._gen += 1  # descarta resultados de busquedas anteriores que sigan en vuelo

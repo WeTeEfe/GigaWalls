@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.3 — 26/11/2026
+- El botón «＋ Más» ya no desaparece al elegir una de sus categorías: queda resaltado y la categoría activa sale marcada con ✔ en el menú.
+
 ## 1.2.2 — 26/11/2026
 - Las etiquetas de búsqueda vuelven a la barra lateral y llenan el espacio que quedaba vacío: 7 a la vista en dos columnas y «＋ Más» con el resto. El catálogo empieza directo en los fondos.
 - «En tu escritorio» ya no se aplasta en ventanas bajas.
