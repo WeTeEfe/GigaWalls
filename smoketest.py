@@ -146,6 +146,32 @@ def run(main, out_path):
         return f"{win.library.count()} videos en la biblioteca"
     check("abrir biblioteca", biblioteca)
 
+    def cola_de_tareas():
+        # dos operaciones seguidas: la segunda espera en la cola y arranca sola al terminar la primera
+        from PySide6.QtCore import QTimer as _T
+        orden = []
+
+        def falsa(nombre):
+            def arrancar(t):
+                orden.append(nombre)
+                t.etapa(0, "probando")
+                t.avance(1, 2)
+                _T.singleShot(300, lambda: (win._end(), t.terminar("Listo")))
+            return arrancar
+        t1, t2 = main.Tarea("prueba 1", ["Paso"]), main.Tarea("prueba 2", ["Paso"])
+        win._encolar(t1, falsa("1"))
+        win._encolar(t2, falsa("2"))
+        if t2.estado != main.Tarea.COLA or t2.posicion != 1 or not win.panel_tareas.isVisible():
+            raise RuntimeError(f"la segunda no quedó en cola (estado {t2.estado}, #{t2.posicion})")
+        if not _esperar(lambda: t1.estado == t2.estado == main.Tarea.LISTA, 10):
+            raise RuntimeError(f"no terminaron: {t1.estado}, {t2.estado}")
+        if orden != ["1", "2"] or win._busy:
+            raise RuntimeError(f"orden {orden}, ocupado={win._busy}")
+        win.panel_tareas.quitar(t1)
+        win.panel_tareas.quitar(t2)
+        return "una después de la otra, con sus tarjetas"
+    check("cola de descargas", cola_de_tareas)
+
     def actualizaciones():
         # lo mismo que hace la copia instalada: consulta GitHub en un hilo (prueba también el SSL del .exe)
         from instalacion import INSTALACION, _en_hilo

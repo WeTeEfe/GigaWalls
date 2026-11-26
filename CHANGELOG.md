@@ -3,6 +3,14 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.0 — 26/11/2026
+- Progreso mucho más visible: cada descarga tiene su tarjeta abajo, con la miniatura, las etapas (Descargar › Optimizar › Aplicar), una barra grande con el % y cuánto falta. Al terminar se pone verde, con «Volver al anterior» o «Usar como fondo».
+- Puedes pedir varios fondos seguidos: se descargan uno tras otro en una cola, y cualquiera se puede cancelar.
+- En el catálogo, el fondo que se está bajando muestra su % encima de la miniatura, y lo que ya tienes lleva la marca «✔ En tu biblioteca».
+- El botón de GigaWalls en la barra de tareas de Windows se llena mientras descarga o convierte.
+- Al aplicar un fondo sale un aviso propio de GigaWalls con la miniatura, «Volver a mis ventanas» y «Deshacer».
+- Interfaz más clara: el mismo estilo oscuro, pero con más contraste y textos más fáciles de leer. La ventana se abre más grande en pantallas Full HD.
+
 ## 1.1.9 — 26/11/2026
 - GigaWalls se actualiza solo: revisa al abrir y cada 6 horas si hay una versión nueva, te avisa, la descarga y se vuelve a abrir actualizado, con tus ajustes y tu biblioteca intactos.
 - «Buscar actualizaciones ahora» en el menú del ícono junto al reloj y en «Acerca de», para revisar en el momento.

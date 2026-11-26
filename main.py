@@ -25,7 +25,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGraphicsScene, QGraphicsView,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QProgressBar, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 import desktophut
@@ -38,6 +38,7 @@ import optimize
 import traducir
 from desktop import DesktopWallpaper, minimizar_ventanas, restaurar_ventanas
 from instalacion import INSTALACION, _caja  # _caja: cuadros con el estilo de la app
+from tareas import AvisoAplicado, BarraTareasWindows, DelegadoProgreso, PanelTareas, Tarea
 from theme import STYLE, badge, rounded
 
 SOURCES = {m.NAME: m for m in (moewalls, desktophut, motionbgs, livewallpapers4free)}
@@ -216,13 +217,13 @@ class _Grid(QListWidget):
         font.setPixelSize(17)
         font.setBold(True)
         p.setFont(font)
-        p.setPen(QColor("#e6e8f0"))
+        p.setPen(QColor("#eef0f7"))
         p.drawText(QRect(0, y, r.width(), 28), Qt.AlignCenter, self._notice)
         if self._notice_sub:
             font.setPixelSize(13)
             font.setBold(False)
             p.setFont(font)
-            p.setPen(QColor("#8a90a6"))
+            p.setPen(QColor("#a2a9c2"))
             p.drawText(QRect(0, y + 30, r.width(), 22), Qt.AlignCenter, self._notice_sub)
         p.end()
 
@@ -462,7 +463,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(ICON_PATH))
         set_dark_title_bar(int(self.winId()))
         self.setMinimumSize(1000, 780)  # por debajo, la barra lateral no cabe
-        encajar_ventana(self, 1240, 820)
+        encajar_ventana(self, 1280, 920)  # pensada para Full HD; en pantallas chicas se encoge
         self.setAcceptDrops(True)  # arrastrar videos a la ventana para importarlos
         self.rotation_timer = QTimer(self)
         self.rotation_timer.timeout.connect(lambda: self.next_wallpaper(auto=True))
@@ -475,15 +476,31 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_search_tab())
         self.pages.addWidget(self._build_library_tab())
         layout.addWidget(self._build_sidebar())
-        layout.addWidget(self.pages, 1)
+        # a la derecha: las páginas y, debajo, la franja de descargas (aparece solo cuando hay algo)
+        derecha = QWidget()
+        columna = QVBoxLayout(derecha)
+        columna.setContentsMargins(0, 0, 0, 0)
+        columna.setSpacing(0)
+        columna.addWidget(self.pages, 1)
+        self.panel_tareas = PanelTareas()
+        columna.addWidget(self.panel_tareas)
+        layout.addWidget(derecha, 1)
         self.setCentralWidget(root)
         self.status = self.statusBar()
-        # barra de progreso compartida por todas las pestañas (descargar, optimizar, reflejar)
-        self.progress = QProgressBar()
-        self.progress.setFixedSize(280, 10)
-        self.progress.setRange(0, 100)
-        self.progress.hide()
-        self.status.addPermanentWidget(self.progress)
+
+        # Descargas y conversiones: una a la vez, el resto espera en la cola; cada una con su tarjeta
+        self._cola = []           # [(Tarea, arrancar)]
+        self._tarea = None        # la que está corriendo (también la optimización en segundo plano)
+        self._por_clave = {}      # url o ruta -> Tarea en curso (para pintar su miniatura)
+        self._nombres_biblio = set()
+        self._actualizar_nombres_biblio()
+        self.barra_windows = BarraTareasWindows()
+        self._aviso = None
+        # mientras algo corre se repintan las miniaturas (el aro gira aunque no llegue avance)
+        self._repintar = QTimer(self, interval=60)
+        self._repintar.timeout.connect(self._repintar_grillas)
+        for grid in (self.results, self.library):
+            grid.setItemDelegate(DelegadoProgreso(grid, self._tarea_de, self._en_biblioteca))
 
         self._build_tray()
         self._update_now_playing()
@@ -604,7 +621,7 @@ class MainWindow(QMainWindow):
         about = QPushButton(f"Versión {INSTALACION.version}  ·  Acerca de")
         about.setCursor(Qt.PointingHandCursor)
         about.setToolTip(f"Acerca de {DISPLAY_NAME} y novedades")
-        about.setStyleSheet("QPushButton { background: transparent; border: none; color: #8a90a6; font-size: 11px;"
+        about.setStyleSheet("QPushButton { background: transparent; border: none; color: #a2a9c2; font-size: 11px;"
                             " text-align: left; padding: 8px 0 0 4px; } QPushButton:hover { color: #7c5cff; }")
         about.clicked.connect(self._about)
         lay.addWidget(about)
@@ -901,105 +918,222 @@ class MainWindow(QMainWindow):
             else:
                 self.status.showMessage("Ya está en tu biblioteca", 5000)
             return
-        if not self._begin(f"Descargando {info['title']}..."):
+        if self._tarea_de(info) is not None:
+            self.status.showMessage("Ese fondo ya se está descargando (o está en la cola)", 4000)
+            return
+        etapas = ["Descargar", "Reflejar" if modes else "Optimizar"] + (["Aplicar"] if use else [])
+        tarea = Tarea(info["title"], etapas, clave=info["url"], miniatura=self._miniatura_catalogo(info["url"]))
+
+        def arrancar(t):
+            t.etapa(0, f"Descargando de {info['source']}", cancelable=True)
+            self.pool.start(Worker(
+                lambda progress: source.download(info["url"], dest, progress, lambda: t.cancelada),
+                lambda ok: self._cancelada(t) if ok is False or t.cancelada else self._on_downloaded(t, dest, use, modes),
+                lambda msg: self._fallo(t, f"No se pudo descargar: {msg}"),
+                lambda d, total: t.avance(d, total, bytes_=True)))
+
+        self._encolar(tarea, arrancar)
+
+    # ---------- cola de tareas ----------
+    def _encolar(self, tarea, arrancar):
+        """Pone la operación en la cola con su tarjeta. arrancar(tarea) la inicia y, al terminar (bien, mal o
+        cancelada), debe llamar a self._end() para que siga la próxima."""
+        if tarea.clave:
+            self._por_clave[tarea.clave] = tarea
+        tarea.al_cancelar = self._al_cancelar
+        tarea.cambio.connect(lambda t=tarea: self._tarea_cambio(t))
+        self._cola.append((tarea, arrancar))
+        self.panel_tareas.agregar(tarea)
+        self._numerar_cola()
+        self._siguiente()
+        self._tarea_cambio(tarea)
+
+    def _siguiente(self):
+        if self._busy:
+            return
+        while self._cola:
+            tarea, arrancar = self._cola.pop(0)
+            self._numerar_cola()
+            if tarea.cancelada:
+                continue
+            self._busy, self._tarea = True, tarea
+            self._repintar.start()
+            arrancar(tarea)
             return
 
-        self.pool.start(Worker(
-            lambda progress: source.download(info["url"], dest, progress),
-            lambda _r: self._on_downloaded(dest, use, modes),
-            self._on_download_error,
-            lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
+    def _numerar_cola(self):
+        for i, (t, _) in enumerate(self._cola, 1):
+            if t.posicion != i:
+                t.posicion = i
+                t.cambio.emit()
 
-    def _begin(self, message):
-        """Reserva el 'turno' de trabajo y muestra la barra. False si ya hay una operación en curso."""
-        if self._busy:
-            self.status.showMessage("Espera: hay otra operación en curso", 4000)
-            return False
-        self._busy = True
-        self.progress.setValue(0)
-        self.progress.show()
-        self.status.showMessage(message)
-        return True
+    def _al_cancelar(self, tarea):
+        if tarea.estado == Tarea.CANCELADA:  # estaba en la cola: sale ya
+            self._cola = [(t, a) for t, a in self._cola if t is not tarea]
+            self._por_clave.pop(tarea.clave, None)
+            self._numerar_cola()
+            self._repintar_grillas()
 
     def _end(self):
+        """Libera el turno (y deja de pintar el progreso de la que terminó) y arranca la siguiente."""
         self._busy = False
-        self.progress.hide()
+        if self._tarea is not None:
+            self._por_clave.pop(self._tarea.clave, None)
+            self._tarea = None
+        if not self._por_clave:
+            self._repintar.stop()
+        self._actualizar_indicadores()
+        self._repintar_grillas()
+        QTimer.singleShot(0, self._siguiente)
 
-    def _on_download_error(self, msg):
+    def _fallo(self, tarea, mensaje):
+        tarea.fallar(mensaje)
         self._end()
-        self.status.showMessage(f"Error de descarga: {msg}")
+        self.barra_windows.poner(self._hwnd(), 1.0, "error")
+        QTimer.singleShot(4000, self._actualizar_indicadores)
 
-    def _on_downloaded(self, dest, use, modes=""):
+    def _cancelada(self, tarea):
+        tarea.marcar_cancelada()
+        self._end()
+
+    def _tarea_cambio(self, tarea):
+        if tarea is self._tarea:
+            self._actualizar_indicadores()
+
+    def _actualizar_indicadores(self):
+        """Barra de tareas de Windows y texto del ícono junto al reloj con la tarea en curso."""
+        t, en_cola = self._tarea, len(self._cola)
+        cola = f" · {en_cola} en cola" if en_cola else ""
+        if t is not None and t.estado == Tarea.ACTIVA:
+            pct = f" {int(t.fraccion * 100)} %" if t.fraccion is not None else "…"
+            self.tray.setToolTip(f"{DISPLAY_NAME} · {t.nombre_etapa}{pct}{cola}\n{t.titulo}")
+            self.barra_windows.poner(self._hwnd(), t.fraccion, "normal" if t.fraccion is not None else "esperando")
+        else:
+            self.tray.setToolTip(DISPLAY_NAME + cola)
+            self.barra_windows.poner(self._hwnd(), None, "nada")
+
+    def _hwnd(self):
+        return int(self.winId()) if self.isVisible() else 0
+
+    def _repintar_grillas(self):
+        for grid in (self.results, self.library):
+            grid.viewport().update()
+
+    def _tarea_de(self, datos):
+        clave = datos.get("url") if isinstance(datos, dict) else datos
+        t = self._por_clave.get(clave)
+        return t if t is not None and t.en_curso else None
+
+    def _actualizar_nombres_biblio(self):
+        self._nombres_biblio = {os.path.basename(p).lower() for p in library.videos(LIBRARY)}
+
+    def _en_biblioteca(self, datos):
+        """¿Ese fondo del catálogo ya está bajado (tal cual o reflejado)?"""
+        if not isinstance(datos, dict):
+            return False
+        try:
+            nombre = SOURCES[datos["source"]].filename(datos["url"]).lower()
+        except Exception:  # noqa: BLE001
+            return False
+        raiz = os.path.splitext(nombre)[0]
+        return nombre in self._nombres_biblio or any(
+            n.startswith(raiz + "-hflip") or n.startswith(raiz + "-vflip") for n in self._nombres_biblio)
+
+    def _miniatura_catalogo(self, url):
+        for i in range(self.results.count()):
+            item = self.results.item(i)
+            datos = item.data(Qt.UserRole)
+            if isinstance(datos, dict) and datos.get("url") == url and not item.icon().isNull():
+                return item.icon().pixmap(ICON_SIZE)
+        return None
+
+    @staticmethod
+    def _miniatura_video(path):
+        thumb = make_thumb(path)
+        return QPixmap(thumb) if thumb else None
+
+    def _texto_perfil(self):
+        return ("Optimizando a 720p/24 fps (modo ahorro)" if self.settings.get("eco", False)
+                else "Optimizando a 1080p/30 fps para ahorrar GPU")
+
+    # ---------- pasos de cada operación ----------
+    def _on_downloaded(self, t, dest, use, modes=""):
+        self._actualizar_nombres_biblio()
+        eco = self.settings.get("eco", False)
         if not modes:
-            self._optimize(dest, lambda: self.set_wallpaper(dest, mostrar=True) if use else None)
+            t.etapa(1, self._texto_perfil())
+            self.pool.start(Worker(
+                lambda progress: optimize.optimize(path=dest, progress=progress, eco=eco),
+                lambda converted: self._terminar(t, dest, use, "" if converted else "Ya venía optimizado"),
+                lambda err: self._terminar(t, dest, use, f"No se pudo optimizar ({err}); se usa el original"),
+                t.avance))
             return
         # reflejar y optimizar en una sola conversión; el original sin reflejar no se guarda
-        eco = self.settings.get("eco", False)
-        self.progress.setValue(0)
-        self.status.showMessage("Reflejando y optimizando...")
-
-        def done(out):
-            self._end()
-            self.refresh_library()
-            self.status.showMessage("Listo y reflejado", 6000)
-            if use:
-                self.set_wallpaper(out, mostrar=True)
-
-        def failed(err):  # queda el original descargado, sin reflejar
-            self._end()
-            self.refresh_library()
-            self.status.showMessage(f"No se pudo reflejar ({err}); quedó el original en tu biblioteca", 8000)
-            if use:
-                self.set_wallpaper(dest, mostrar=True)
-
+        t.etapa(1, "Reflejando " + {"h": "izquierda ↔ derecha", "v": "arriba ↕ abajo"}.get(modes, "en los dos sentidos"))
         self.pool.start(Worker(
-            lambda progress: optimize.optimize_flipped(dest, modes, progress, eco), done, failed,
-            lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
+            lambda progress: optimize.optimize_flipped(dest, modes, progress, eco),
+            lambda out: self._terminar(t, out, use),
+            lambda err: self._terminar(t, dest, use, f"No se pudo reflejar ({err}); quedó el original"),
+            t.avance))
 
-    def _optimize(self, path, then):
-        """Convierte al perfil elegido (1080p/30 o ahorro 720p/24) si hace falta y luego llama a then()."""
-        eco = self.settings.get("eco", False)
-        self.progress.setValue(0)
-        self.status.showMessage("Optimizando a 720p/24fps (modo ahorro)..." if eco
-                                else "Optimizando a 1080p/30fps para ahorrar GPU...")
-
-        def finish(msg):
+    def _terminar(self, t, path, use, nota=""):
+        """Último paso de una descarga o un reflejado: deja la tarjeta en verde y, si se pidió, lo aplica."""
+        self._actualizar_nombres_biblio()
+        if self.pages.currentIndex() == 1:
+            self.refresh_library()
+        if use:
+            t.etapa(len(t.etapas) - 1, "Poniéndolo en tu escritorio")
+            anterior = self.settings.get("current")
             self._end()
-            self.status.showMessage(msg, 6000)
-            then()
-
-        self.pool.start(Worker(
-            lambda progress: optimize.optimize(path, progress, eco),
-            lambda converted: finish("Listo y optimizado" if converted else "Listo"),
-            lambda err: finish(f"No se pudo optimizar ({err}); se usa el original"),
-            lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
+            self.set_wallpaper(path, mostrar=True)
+            acciones = []
+            if anterior and anterior != path and os.path.exists(anterior):
+                acciones.append(("Volver al anterior", lambda: self.set_wallpaper(anterior, mostrar=True), False))
+            t.terminar("Aplicado en tu escritorio", nota, acciones)
+        else:
+            self._end()
+            t.terminar("Guardado en tu biblioteca", nota,
+                       [("Usar como fondo", lambda: self.set_wallpaper(path, mostrar=True), True)])
 
     def flip_wallpaper(self, path, mode):
         """Crea una copia reflejada en la biblioteca y la aplica como fondo."""
-        if not self._begin("Reflejando video..."):
-            return
+        tarea = Tarea(library.display_name(path), ["Reflejar", "Aplicar"], clave=path,
+                      miniatura=self._miniatura_video(path))
 
-        def done(out):
-            self._end()
-            self.refresh_library()
-            self.set_wallpaper(out, mostrar=True)
+        def arrancar(t):
+            t.etapa(0, "Reflejando izquierda ↔ derecha" if mode == "h" else "Reflejando arriba ↕ abajo")
+            self.pool.start(Worker(
+                lambda progress: optimize.flip(path, mode, progress),
+                lambda out: self._terminar(t, out, True),
+                lambda err: self._fallo(t, f"No se pudo reflejar: {err}"),
+                t.avance))
 
-        def failed(err):
-            self._end()
-            self.status.showMessage(f"No se pudo reflejar: {err}")
-
-        self.pool.start(Worker(
-            lambda progress: optimize.flip(path, mode, progress), done, failed,
-            lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
+        self._encolar(tarea, arrancar)
 
     def optimize_wallpaper(self, path):
-        if not self._begin("Optimizando..."):
-            return
-        was_current = self.settings.get("current") == path
-        if was_current:
-            self.wallpaper.stop()  # Windows no deja reemplazar un archivo que se esta reproduciendo
-        self._optimize(path, lambda: (self.set_wallpaper(path) if was_current else None,
-                                      self.refresh_library()))
+        tarea = Tarea(library.display_name(path), ["Optimizar"], clave=path, miniatura=self._miniatura_video(path))
+        eco = self.settings.get("eco", False)
+
+        def arrancar(t):
+            was_current = self.settings.get("current") == path
+            if was_current:
+                self.wallpaper.stop()  # Windows no deja reemplazar un archivo que se está reproduciendo
+            t.etapa(0, self._texto_perfil())
+
+            def fin(converted, err=None):
+                if was_current:
+                    self.set_wallpaper(path)
+                self.refresh_library()
+                if err:
+                    self._fallo(t, f"No se pudo optimizar: {err}")
+                    return
+                self._end()
+                t.terminar("Optimizado: ahora gasta menos GPU" if converted else "Ya estaba optimizado")
+
+            self.pool.start(Worker(lambda progress: optimize.optimize(path, progress, eco),
+                                   fin, lambda err: fin(False, err), t.avance))
+
+        self._encolar(tarea, arrancar)
 
     # ---------- biblioteca ----------
     def _build_library_tab(self):
@@ -1055,6 +1189,7 @@ class MainWindow(QMainWindow):
         previous = self.library.currentItem().data(Qt.UserRole) if self.library.currentItem() else None
         self.library.clear()
         paths = library.videos(LIBRARY)
+        self._nombres_biblio = {os.path.basename(p).lower() for p in paths}  # «✔ En tu biblioteca» del catálogo
         favs = set(self.settings.get("favorites", []))
         text = self.lib_filter.text().strip().lower()
         shown = [p for p in paths
@@ -1164,10 +1299,10 @@ class MainWindow(QMainWindow):
         if not files:
             self.status.showMessage(f"Solo se pueden importar videos ({', '.join(library.VIDEO_EXTS)})", 5000)
             return
-        if not self._begin(f"Importando {len(files)} video(s)..."):
-            return
         eco = self.settings.get("eco", False)
         os.makedirs(LIBRARY, exist_ok=True)
+        titulo = library.display_name(files[0]) if len(files) == 1 else f"{len(files)} videos importados"
+        tarea = Tarea(titulo, ["Copiar", "Optimizar"], miniatura=self._miniatura_video(files[0]))
 
         def job(progress):
             done = []
@@ -1183,24 +1318,35 @@ class MainWindow(QMainWindow):
 
         def finished(done):
             self._end()
+            self._actualizar_nombres_biblio()
             self.nav_group.button(1).setChecked(True)
             self._goto_page(1)
-            self.status.showMessage(f"{len(done)} video(s) importado(s)", 6000)
             for i in range(self.library.count()):  # dejar seleccionado el último importado
                 if self.library.item(i).data(Qt.UserRole) == done[-1]:
                     self.library.setCurrentRow(i)
+            tarea.terminar(f"{len(done)} video{'s' if len(done) > 1 else ''} en tu biblioteca", "",
+                           [("Usar como fondo", lambda: self.set_wallpaper(done[-1], mostrar=True), True)])
 
         def failed(err):
-            self._end()
             self.refresh_library()
-            self.status.showMessage(f"No se pudo importar: {err}", 8000)
+            self._fallo(tarea, f"No se pudo importar: {err}")
 
-        self.pool.start(Worker(job, finished, failed,
-                               lambda d, t: self.progress.setValue(int(d * 100 / t) if t else 0)))
+        def arrancar(t):
+            t.etapa(0, "Copiando a tu biblioteca")
+
+            def avance(d, total):
+                if t.indice == 0 and d > 0:  # la copia es instantánea: lo que se mide es la conversión
+                    t.etapa(1, self._texto_perfil())
+                t.avance(d, total)
+
+            self.pool.start(Worker(job, finished, failed, avance))
+
+        self._encolar(tarea, arrancar)
 
     # ---------- fondo ----------
     def set_wallpaper(self, path, mostrar=False):
         """mostrar: lo eligió el usuario (no la rotación): se confirma y se deja ver el escritorio."""
+        anterior = self.settings.get("current")
         self.wallpaper.set_video(path)
         self.settings["current"] = path
         save_settings(self.settings)
@@ -1208,20 +1354,35 @@ class MainWindow(QMainWindow):
         self.status.showMessage("Fondo aplicado", 5000)
         self.ensure_profile(path)
         if mostrar:  # un momento para que el video arranque antes de destapar el escritorio
-            QTimer.singleShot(700, lambda: self._mostrar_fondo(path))
+            QTimer.singleShot(700, lambda: self._mostrar_fondo(path, anterior))
 
-    def _mostrar_fondo(self, path):
+    def _mostrar_fondo(self, path, anterior=None):
         """Confirma con un aviso que el fondo quedó instalado. Si la ventana estaba a la vista, la manda
-        a la bandeja y minimiza las demás para que se vea el escritorio; tocar el aviso las devuelve."""
+        a la bandeja y minimiza las demás para que se vea el escritorio; el aviso las devuelve."""
         if self.settings.get("current") != path:
             return  # ya se cambió por otro
-        texto = f"«{titulo_video(path)}» ya está en tu escritorio."
-        if self.isVisible():
+        volver = self.isVisible()
+        if volver:
             self.hide()
             minimizar_ventanas()
             self._volver = True
-            texto += "\nHaz clic aquí para volver a tus ventanas."
-        self.tray.showMessage("Fondo instalado ✔", texto, QIcon(ICON_PATH), 6000)
+        deshacer = None
+        if anterior and anterior != path and os.path.exists(anterior):
+            deshacer = lambda: self.set_wallpaper(anterior)  # noqa: E731
+        if self._aviso is not None:
+            try:
+                self._aviso.close()
+            except RuntimeError:  # ya se cerró solo
+                pass
+        aviso = AvisoAplicado(self._miniatura_video(path), titulo_video(path),
+                              self._aviso_tocado if volver else None, deshacer)
+        self._aviso = aviso
+        aviso.destroyed.connect(lambda _=None, a=aviso: setattr(self, "_aviso", None) if self._aviso is a else None)
+
+        def mostrar():  # después de «minimizar todo», para que no lo arrastre
+            if self._aviso is aviso:
+                aviso.mostrar()
+        QTimer.singleShot(350 if volver else 0, mostrar)
 
     def _aviso_tocado(self):
         if self._volver:
@@ -1238,12 +1399,21 @@ class MainWindow(QMainWindow):
             return
         self._busy = True  # se reserva sin mostrar nada: casi siempre el video ya cumple el perfil
         eco = self.settings.get("eco", False)
+        tarjeta = {}
 
         def progress(d, t):
-            if self.progress.isHidden():
-                self.progress.show()
-                self.status.showMessage("Optimizando el fondo en segundo plano (gasta menos memoria)...")
-            self.progress.setValue(int(d * 100 / t) if t else 0)
+            if "tarea" not in tarjeta:  # sí hace falta convertir: recién ahí aparece la tarjeta
+                tarea = Tarea(library.display_name(path), ["Optimizar", "Cambiar"], clave=path,
+                              miniatura=self._miniatura_video(path))
+                tarea.cancelable = False
+                tarjeta["tarea"] = tarea
+                self._tarea = tarea
+                self._por_clave[path] = tarea
+                tarea.cambio.connect(lambda: self._tarea_cambio(tarea))
+                self.panel_tareas.agregar(tarea)
+                self._repintar.start()
+                tarea.etapa(0, self._texto_perfil() + " (en segundo plano, se sigue viendo)")
+            tarjeta["tarea"].avance(d, t)
 
         def converted(tmp):
             if not tmp:
@@ -1251,6 +1421,8 @@ class MainWindow(QMainWindow):
                 return
             playing = self.settings.get("current") == path
             paused = self.wallpaper.paused
+            if "tarea" in tarjeta:
+                tarjeta["tarea"].etapa(1, "Cambiando por la versión ligera")
             if playing:
                 self.wallpaper.stop()  # Windows no deja reemplazar un archivo que se está reproduciendo
 
@@ -1258,12 +1430,15 @@ class MainWindow(QMainWindow):
                 self._end()
                 restart()
                 self.refresh_library()
-                self.status.showMessage("Fondo optimizado", 6000)
+                if "tarea" in tarjeta:
+                    tarjeta["tarea"].terminar("Fondo optimizado", "Ahora gasta menos memoria y GPU")
 
             def swap_failed(err):
-                self._end()
                 restart()
-                self.status.showMessage(f"No se pudo optimizar el fondo ({err}); se usa el original", 8000)
+                if "tarea" in tarjeta:
+                    self._fallo(tarjeta["tarea"], f"No se pudo optimizar el fondo ({err}); se usa el original")
+                else:
+                    self._end()
 
             def restart():
                 if playing and self.settings.get("current") == path:
@@ -1276,8 +1451,10 @@ class MainWindow(QMainWindow):
                 Worker(lambda _p: optimize.replace(tmp, path), swapped, swap_failed)))
 
         def failed(err):
-            self._end()
-            self.status.showMessage(f"No se pudo optimizar el fondo ({err}); se usa el original", 8000)
+            if "tarea" in tarjeta:
+                self._fallo(tarjeta["tarea"], f"No se pudo optimizar el fondo ({err}); se usa el original")
+            else:
+                self._end()
 
         self.pool.start(Worker(lambda p: optimize.convert(path, p, eco), converted, failed, progress))
 
