@@ -3,6 +3,12 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.1 — 26/11/2026
+- Vuelve el negro, ahora con más vida: tarjetas con relieve que se despegan del fondo y se iluminan en morado al pasar el mouse, toques lavanda claros, botones con degradado y un brillo morado en la barra lateral.
+- Letra nueva: Nunito, más redonda y amigable. Viene dentro de la app, así que se ve igual en cualquier PC.
+- 14 etiquetas de búsqueda rápida con ícono bajo el buscador: Anime, Juegos, Cyberpunk, Espacio, Lluvia, Naturaleza, Océano, Fantasía, Superhéroes, Lofi, Pixel art, Autos, Películas y Cartoons.
+- La barra de descargas ya no tapa nada: queda fija abajo y solo aparece mientras hay algo descargándose.
+
 ## 1.2.0 — 26/11/2026
 - Progreso mucho más visible: cada descarga tiene su tarjeta abajo, con la miniatura, las etapas (Descargar › Optimizar › Aplicar), una barra grande con el % y cuánto falta. Al terminar se pone verde, con «Volver al anterior» o «Usar como fondo».
 - Puedes pedir varios fondos seguidos: se descargan uno tras otro en una cola, y cualquiera se puede cancelar.

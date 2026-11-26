@@ -105,12 +105,12 @@ def _caja(icono, titulo, texto, detalle, botones, chip="", lista=None):
     chip_fondo, chip_borde, chip_texto = mezcla("#141824", color, .18), mezcla("#141824", color, .5), mezcla(color, "#ffffff", .55)
     d.setStyleSheet(f"""
         QDialog {{ background: #141824; }}
-        QLabel {{ color: #e6e8f0; font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
+        QLabel {{ color: #e6e8f0; font-family: 'Nunito', 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
         QLabel#titulo {{ font-size: 19px; font-weight: 700; color: #ffffff; }}
         QLabel#detalle {{ color: #8a90a6; }}
         QLabel#chip {{ background: {chip_fondo}; color: {chip_texto}; border: 1px solid {chip_borde}; border-radius: 11px;
                        padding: 3px 12px; font-size: 12px; font-weight: 600; }}
-        QPushButton {{ font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
+        QPushButton {{ font-family: 'Nunito', 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
                        background: #1d2130; border: 1px solid #2c3249; border-radius: 10px;
                        padding: 9px 20px; min-width: 90px; }}
         QPushButton:hover {{ background: #262b3f; border-color: #3a4160; }}
@@ -702,13 +702,13 @@ class Instalacion:
         d.setMinimumWidth(460)
         d.setStyleSheet(f"""
             QDialog {{ background: #141824; }}
-            QLabel {{ color: #e6e8f0; font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
+            QLabel {{ color: #e6e8f0; font-family: 'Nunito', 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; }}
             QLabel#titulo {{ font-size: 17px; font-weight: 700; color: #ffffff; }}
             QLabel#detalle {{ color: #8a90a6; }}
             QProgressBar {{ background: #1d2130; border: 1px solid #2c3249; border-radius: 6px; height: 12px;
                             text-align: center; color: transparent; }}
             QProgressBar::chunk {{ background: {_ACENTO}; border-radius: 5px; }}
-            QPushButton {{ font-family: 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
+            QPushButton {{ font-family: 'Nunito', 'Segoe UI Variable Text', 'Segoe UI'; font-size: 13px; color: #e6e8f0;
                            background: #1d2130; border: 1px solid #2c3249; border-radius: 10px;
                            padding: 8px 18px; min-width: 90px; }}
             QPushButton:hover {{ background: #262b3f; border-color: #3a4160; }}
@@ -819,7 +819,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.2.0",
+    version="1.2.1",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",

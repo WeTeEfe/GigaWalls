@@ -17,14 +17,14 @@ from itertools import zip_longest
 os.environ.setdefault("QT_D3D_NO_VBLANK_THREAD", "1")
 
 import cv2
-from PySide6.QtCore import QObject, QRect, QRunnable, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap, QTransform
+from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGraphicsScene, QGraphicsView,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
@@ -70,8 +70,10 @@ PREVIEW_DIR = os.path.join(tempfile.gettempdir(), "GigaWalls_previews")
 # Opciones de rotación automática: (texto, minutos). 0 = sin rotar, -1 = al iniciar la app
 ROTATIONS = (("No cambiar", 0), ("Cada 5 minutos", 5), ("Cada 15 minutos", 15),
              ("Cada 30 minutos", 30), ("Cada hora", 60), ("Cada vez que abro la app", -1))
-EXPLORE = (("Anime", "anime"), ("Juegos", "game"), ("Cartoons", "cartoon"), ("Pixel art", "pixel art"),
-           ("Paisajes", "landscape"), ("Lofi", "lofi"), ("Autos", "car"), ("Películas", "movie"))
+EXPLORE = (("🎌 Anime", "anime"), ("🎮 Juegos", "game"), ("🌃 Cyberpunk", "cyberpunk"), ("🌌 Espacio", "space"),
+           ("🌧 Lluvia", "rain"), ("🌿 Naturaleza", "nature"), ("🌊 Océano", "ocean"), ("🐉 Fantasía", "fantasy"),
+           ("🦸 Superhéroes", "superhero"), ("🎧 Lofi", "lofi"), ("👾 Pixel art", "pixel art"), ("🏎 Autos", "car"),
+           ("🎬 Películas", "movie"), ("📺 Cartoons", "cartoon"))
 
 
 _LIVE = set()
@@ -257,6 +259,71 @@ class _Grid(QListWidget):
             actual = round(barra.value() / fila) * fila
             barra.setValue(actual - pasos * fila)
         event.accept()
+
+
+class _Flujo(QLayout):
+    """Pone los widgets en fila y pasa a la siguiente cuando no caben (como palabras en un párrafo)."""
+
+    def __init__(self, padre=None, espacio=8):
+        super().__init__(padre)
+        self._items, self._espacio = [], espacio
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientations(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, ancho):
+        return self._acomodar(QRect(0, 0, ancho, 0), probar=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._acomodar(rect, probar=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        s = QSize()
+        for it in self._items:
+            s = s.expandedTo(it.minimumSize())
+        return s
+
+    def _acomodar(self, rect, probar):
+        x, y, alto_fila = rect.x(), rect.y(), 0
+        for it in self._items:
+            hint = it.sizeHint()
+            if x + hint.width() > rect.right() + 1 and alto_fila:
+                x, y, alto_fila = rect.x(), y + alto_fila + self._espacio, 0
+            if not probar:
+                it.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + self._espacio
+            alto_fila = max(alto_fila, hint.height())
+        return y + alto_fila - rect.y()
+
+
+def cargar_fuente(app):
+    """Nunito va dentro de la app (assets/fonts, licencia OFL): se ve igual en cualquier PC. Si faltara, el
+    tema cae solo a Segoe UI."""
+    ruta = os.path.join(ASSETS, "fonts", "Nunito.ttf")
+    if QFontDatabase.addApplicationFont(ruta) >= 0:
+        fuente = QFont("Nunito")
+        fuente.setPixelSize(14)
+        app.setFont(fuente)  # también para lo que se pinta a mano (miniaturas, avisos)
 
 
 def encajar_ventana(win, ancho, alto, barra_titulo=32):
@@ -533,16 +600,7 @@ class MainWindow(QMainWindow):
         group.idClicked.connect(self._goto_page)
         self.nav_group = group
 
-        lay.addWidget(QLabel("EXPLORAR", objectName="section"))
-        chips = QGridLayout()
-        chips.setContentsMargins(8, 0, 8, 0)
-        chips.setSpacing(6)
-        for i, (label, term) in enumerate(EXPLORE):
-            chip = QPushButton(label, objectName="chip")
-            chip.clicked.connect(lambda _=False, t=term: self._explore(t))
-            chips.addWidget(chip, i // 2, i % 2)
-        lay.addLayout(chips)
-        lay.addStretch()
+        lay.addStretch()  # las etiquetas de búsqueda están en el catálogo, bajo el buscador
 
         card = QFrame(objectName="nowcard")
         cl = QVBoxLayout(card)
@@ -592,7 +650,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(card)
         lay.addSpacing(6)
 
-        self.all_screens = QCheckBox("Video en todas las pantallas")
+        self.all_screens = QCheckBox("Todas las pantallas")
         self.all_screens.setChecked(self.settings.get("all_screens", False))
         self.all_screens.setToolTip("Desmarcado: el video solo se reproduce en la pantalla principal "
                                     "y las demás muestran una imagen fija (usa mucha menos GPU)")
@@ -688,7 +746,7 @@ class MainWindow(QMainWindow):
             self.refresh_library()
 
     def _explore(self, term):
-        """Acceso rápido de la barra lateral: abre el catálogo y busca esa categoría."""
+        """Etiqueta de búsqueda rápida: abre el catálogo y busca esa categoría."""
         self.nav_group.button(0).setChecked(True)
         self._goto_page(0)
         self.search_box.setText(term)
@@ -713,6 +771,19 @@ class MainWindow(QMainWindow):
         row.addWidget(self.source_box)
         row.addWidget(btn)
         lay.addLayout(row)
+
+        # etiquetas de búsqueda rápida: una fila bajo el buscador (pasa a dos si la ventana es angosta)
+        etiquetas = QWidget()
+        flujo = _Flujo(etiquetas, espacio=8)
+        self.tag_chips = []
+        for label, term in EXPLORE:
+            chip = QPushButton(label, objectName="tag", checkable=True)
+            chip.setProperty("term", term)
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.clicked.connect(lambda _=False, t=term: self._explore(t))
+            flujo.addWidget(chip)
+            self.tag_chips.append(chip)
+        lay.addWidget(etiquetas)
 
         self.results = self._make_grid()
         self.results.itemDoubleClicked.connect(self.preview)  # ver antes de descargar
@@ -758,6 +829,8 @@ class MainWindow(QMainWindow):
 
     def search(self, query):
         self.query = query
+        for chip in getattr(self, "tag_chips", ()):  # resalta la etiqueta si la búsqueda es la suya
+            chip.setChecked(chip.property("term") == query.lower())
         self.page = 0
         self.exhausted = False
         self._gen += 1  # descarta resultados de busquedas anteriores que sigan en vuelo
@@ -1823,6 +1896,7 @@ def main():
         sys.exit(selftest(args[0], args[1] if len(args) > 1 else None))
     if "--smoketest" in sys.argv:  # prueba completa antes de publicar (ver smoketest.py / release.bat)
         import smoketest
+        cargar_fuente(app)
         app.setStyleSheet(STYLE)
         os._exit(smoketest.run(sys.modules[__name__], sys.argv[sys.argv.index("--smoketest") + 1]))
     app.setWindowIcon(QIcon(ICON_PATH))
@@ -1840,6 +1914,7 @@ def main():
     app.setWindowIcon(QIcon(ICON_PATH))
     app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
+    cargar_fuente(app)
     app.setStyleSheet(STYLE)
     settings = load_settings()
     current = settings.get("current")

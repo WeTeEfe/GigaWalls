@@ -181,8 +181,8 @@ class BarraProgreso(QWidget):
 
 # ---------------------------------------------------------------- tarjeta
 _ESTILO_TARJETA = f"""
-QFrame#tarjeta {{ background: #252a40; border: 1px solid #3d4563; border-radius: 14px; }}
-QFrame#tarjeta[estado="lista"] {{ border-color: #5c8f1f; background: #1f2a1c; }}
+QFrame#tarjeta {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22263a, stop:1 #181b28); border: 1px solid #353c5a; border-radius: 14px; }}
+QFrame#tarjeta[estado="lista"] {{ border-color: #7ac70c; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #24351a, stop:1 #161d14); }}
 QFrame#tarjeta[estado="error"] {{ border-color: #8a3550; background: #2d1c26; }}
 QFrame#tarjeta QLabel {{ background: transparent; }}
 QLabel#tt_titulo {{ font-size: 13px; font-weight: 700; color: #ffffff; }}
@@ -198,7 +198,7 @@ QFrame#tarjeta QPushButton#tt_accion {{ padding: 3px 12px; font-size: 12px; bord
 QFrame#tarjeta QPushButton#tt_principal {{ padding: 3px 12px; font-size: 12px; border-radius: 9px;
                                           background: {ACENTO}; border: none; color: white; font-weight: 600; }}
 QFrame#tarjeta QPushButton#tt_principal:hover {{ background: #8f73ff; }}
-QLabel#tt_mas {{ background: #252a40; border: 1px solid #3d4563; border-radius: 12px; color: #b4bad0;
+QLabel#tt_mas {{ background: #1f2336; border: 1px solid #353c5c; border-radius: 12px; color: #b4bad0;
                  font-size: 12px; padding: 5px 12px; }}
 """
 
