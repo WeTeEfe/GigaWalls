@@ -346,14 +346,51 @@ class Instalacion:
                     pass
 
     # ---------- instalar ----------
+    @property
+    def _nombre_evento(self):
+        return f"Local\\GigaTech.{self.clave}.Cerrar"
+
+    def escuchar_cierre(self, salir):
+        """La app abierta atiende el pedido de cierre del instalador (un evento de Windows con nombre) y sale
+        por su cuenta con `salir`: así quita su ícono de la bandeja. Si la mataban, Windows dejaba un ícono
+        fantasma junto al reloj hasta pasarle el mouse."""
+        import ctypes
+        from PySide6.QtCore import QTimer
+        k = ctypes.windll.kernel32
+        k.CreateEventW.restype = ctypes.c_void_p
+        h = k.CreateEventW(None, True, False, self._nombre_evento)  # reinicio manual, empieza apagado
+        if not h:
+            return
+        k.ResetEvent(ctypes.c_void_p(h))  # por si quedó encendido de una actualización anterior
+        self._evento_cierre = h
+
+        def revisar():
+            if k.WaitForSingleObject(ctypes.c_void_p(h), 0) == 0:  # WAIT_OBJECT_0: lo pidió el instalador
+                self._reloj_cierre.stop()
+                salir()
+        self._reloj_cierre = QTimer()
+        self._reloj_cierre.timeout.connect(revisar)
+        self._reloj_cierre.start(400)
+
     def cerrar_otras(self):
         """Cierra las copias instaladas que estén abiertas y lo que corra desde su carpeta (no se puede
-        reemplazar un archivo en uso)."""
+        reemplazar un archivo en uso). Primero les pide que salgan solas (escuchar_cierre) y espera unos
+        segundos; lo que siga abierto después se cierra a la fuerza."""
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.OpenEventW.restype = ctypes.c_void_p
+        h = k.OpenEventW(0x0002, False, self._nombre_evento)  # EVENT_MODIFY_STATE; None si nadie escucha
+        if h:
+            k.SetEvent(ctypes.c_void_p(h))
         yo = f"{os.getpid()},{os.getppid()}"  # el proceso y su lanzador (onefile)
         dentro = _q(os.path.join(self.carpeta, ""))
-        _ps(f"Get-Process | Where-Object {{ $_.Path -and ($_.Path -eq '{_q(self.exe)}' -or "
-            f"$_.Path.StartsWith('{dentro}', [StringComparison]::OrdinalIgnoreCase)) -and $_.Id -notin @({yo}) }}"
-            " | Stop-Process -Force -ErrorAction SilentlyContinue")
+        filtro = (f"Get-Process | Where-Object {{ $_.Path -and ($_.Path -eq '{_q(self.exe)}' -or "
+                  f"$_.Path.StartsWith('{dentro}', [StringComparison]::OrdinalIgnoreCase)) -and $_.Id -notin @({yo}) }}")
+        espera = f"{filtro} | Wait-Process -Timeout 8 -ErrorAction SilentlyContinue; " if h else ""
+        _ps(f"{espera}{filtro} | Stop-Process -Force -ErrorAction SilentlyContinue")
+        if h:
+            k.ResetEvent(ctypes.c_void_p(h))  # que la copia nueva no lo encuentre encendido al abrir
+            k.CloseHandle(ctypes.c_void_p(h))
         time.sleep(0.8)
 
     @staticmethod
@@ -819,7 +856,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.2.3",
+    version="1.2.4",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",

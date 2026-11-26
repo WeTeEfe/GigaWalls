@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.4 — 26/11/2026
+- Al actualizar ya no queda un ícono fantasma de GigaWalls junto al reloj: el instalador le pide a la app que se cierre sola (y quite su ícono) en vez de cerrarla de golpe.
+
 ## 1.2.3 — 26/11/2026
 - El botón «＋ Más» ya no desaparece al elegir una de sus categorías: queda resaltado y la categoría activa sale marcada con ✔ en el menú.
 

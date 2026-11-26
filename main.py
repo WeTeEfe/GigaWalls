@@ -1649,9 +1649,10 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def _quit(self):
+        self.tray.hide()  # lo primero: si algo tarda o la cierran a la fuerza, no queda ícono fantasma
+        QApplication.processEvents()
         self.pool.waitForDone(3000)
         self.wallpaper.stop()
-        self.tray.hide()
         QApplication.processEvents()  # deja que se liberen reproductor y widgets antes de salir
         QApplication.quit()
 
@@ -1995,6 +1996,7 @@ def main():
         win.show()
     QTimer.singleShot(1500, INSTALACION.avisar_novedades)  # «se instaló / se actualizó: esto es lo nuevo» (una vez)
     INSTALACION.salir = win._quit  # al actualizar se cierra igual que con «Salir»
+    INSTALACION.escuchar_cierre(win._quit)  # el instalador le pide salir (sin matarla: no deja ícono fantasma)
     INSTALACION.actualizar_automaticamente()  # revisa GitHub a los 20 s y luego cada 6 h (solo la copia instalada)
     code = app.exec()
     # Todo se guarda en el momento (ajustes, biblioteca) y el fondo ya se detuvo en _quit. Salir ya,
