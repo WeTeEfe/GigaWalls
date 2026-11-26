@@ -31,6 +31,7 @@ SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"
 
 # QUNS_BUSY (pantalla completa), QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
 FULLSCREEN_STATES = {2, 3, 4}
+_QUNS_BUSY = 2
 
 # comandos de la barra de tareas: «Minimizar todo» y deshacerlo (lo mismo que Win+M / Win+Shift+M)
 _MINIMIZAR_TODO, _DESHACER_MINIMIZAR = 419, 416
@@ -112,41 +113,63 @@ def _invisible_layered(hwnd, exstyle):
     return bool(flags.value & 0x2) and alpha.value < 10  # LWA_ALPHA casi 0
 
 
-def _covered_monitors():
-    """Monitores que de verdad quedan tapados por una ventana maximizada o a pantalla completa.
+def _covering_monitor(hwnd):
+    """Monitor que `hwnd` tapa de verdad (cubre casi toda su area de trabajo), o None.
 
-    No basta con IsZoomed: muchas apps (Spotify, overlays de NVIDIA/Steam/Discord, ventanas
-    auxiliares) se declaran maximizadas sin cubrir la pantalla o siendo invisibles, y con eso el
-    fondo quedaba en pausa para siempre. Se exige que la ventana cubra casi toda el area de trabajo."""
+    No basta con IsZoomed ni con el tamano: muchas apps (Spotify, overlays de NVIDIA/Steam/Discord,
+    ventanas auxiliares) se declaran maximizadas o miden lo que la pantalla siendo invisibles."""
+    if not hwnd or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+        return None
+    if _class_name(hwnd) in SHELL_CLASSES:
+        return None
+    exstyle = user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF
+    if exstyle & _IGNORED_EXSTYLE or _invisible_layered(hwnd, exstyle):
+        return None
+    cloaked = ctypes.c_int()  # ventanas de apps UWP ocultas o de otro escritorio virtual
+    dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)
+    if cloaked.value:
+        return None
+    monitor = user32.MonitorFromWindow(hwnd, 2)
+    info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
+    if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return None
+    r, work = _frame_rect(hwnd), info.rcWork
+    ix = max(0, min(r.right, work.right) - max(r.left, work.left))
+    iy = max(0, min(r.bottom, work.bottom) - max(r.top, work.top))
+    area = (work.right - work.left) * (work.bottom - work.top)
+    return monitor if area > 0 and ix * iy >= 0.9 * area else None
+
+
+def _covered_monitors():
+    """Monitores que de verdad quedan tapados por una ventana maximizada o a pantalla completa."""
     covered = set()
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def enum(hwnd, _):
-        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
-            return True
-        if _class_name(hwnd) in SHELL_CLASSES:
-            return True
-        exstyle = user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF
-        if exstyle & _IGNORED_EXSTYLE or _invisible_layered(hwnd, exstyle):
-            return True
-        cloaked = ctypes.c_int()  # ventanas de apps UWP ocultas o de otro escritorio virtual
-        dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)
-        if cloaked.value:
-            return True
-        monitor = user32.MonitorFromWindow(hwnd, 2)
-        info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
-        if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return True
-        r, work = _frame_rect(hwnd), info.rcWork
-        ix = max(0, min(r.right, work.right) - max(r.left, work.left))
-        iy = max(0, min(r.bottom, work.bottom) - max(r.top, work.top))
-        area = (work.right - work.left) * (work.bottom - work.top)
-        if area > 0 and ix * iy >= 0.9 * area:
+        monitor = _covering_monitor(hwnd)
+        if monitor:
             covered.add(monitor)
         return True
 
     user32.EnumWindows(enum, 0)
     return covered
+
+
+def _fullscreen_app():
+    """True si hay una app a pantalla completa (juego, video, presentacion).
+
+    El aviso de Windows de «pantalla completa» (QUNS_BUSY) se fija en la ventana de arriba que mide
+    lo que el monitor, aunque sea invisible: el overlay de NVIDIA GeForce (CEF-OSC-WIDGET, 1920x1080)
+    lo dispara al minimizar todo y el fondo se pausaba con el escritorio a la vista. Por eso ese aviso
+    solo vale si la ventana en primer plano de verdad tapa su monitor; los de Direct3D exclusivo y
+    modo presentacion se respetan siempre."""
+    state = ctypes.c_int()
+    shell32.SHQueryUserNotificationState(ctypes.byref(state))
+    if state.value not in FULLSCREEN_STATES:
+        return False
+    if state.value == _QUNS_BUSY:
+        return _covering_monitor(user32.GetForegroundWindow()) is not None
+    return True
 
 
 def _class_name(hwnd):
@@ -400,9 +423,7 @@ class DesktopWallpaper:
             return
         if not self._videos:
             return
-        state = ctypes.c_int()
-        shell32.SHQueryUserNotificationState(ctypes.byref(state))
-        full = state.value in FULLSCREEN_STATES
+        full = _fullscreen_app()
         visible = self._videos
         if not full and self.pause_when_covered:
             covered = _covered_monitors()

@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.1.8 — 26/11/2026
+- El fondo ya no se pausa al minimizar todo cuando está instalado el overlay de NVIDIA GeForce: Windows lo confundía con una app a pantalla completa.
+
 ## 1.1.7 — 24/11/2026
 - Al poner un fondo, un aviso confirma que quedó instalado y se minimizan las ventanas para que lo veas en el escritorio. Haz clic en el aviso para que tus ventanas vuelvan.
 - La rotación automática y «Siguiente fondo» cambian el fondo sin minimizar nada.
