@@ -12,8 +12,8 @@ instaladas» de Windows y puede arrancar con Windows. Se desinstala desde Window
 También muestra las novedades: CHANGELOG.md va dentro del .exe («## versión — fecha» y debajo «- cambio»);
 «Novedades…» en la bandeja abre el historial y la copia instalada avisa una vez cuando cambió de versión.
 
-Este archivo es idéntico en GigaWalls y Grabador de pantalla: lo único que cambia es la
-configuración al final (INSTALACION = Instalacion(...)). Si se corrige uno, copiar al otro.
+Este archivo es idéntico en todas las apps de GigaTech que se instalan: lo único que cambia es la
+configuración al final (INSTALACION = Instalacion(...)). Si se corrige uno, copiarlo a los demás.
 """
 import os
 import shutil
