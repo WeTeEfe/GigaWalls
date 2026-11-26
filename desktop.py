@@ -1,6 +1,7 @@
 """Reproduce un video en bucle detras de los iconos del escritorio (truco WorkerW)."""
 import ctypes
 import threading
+import time
 from ctypes import wintypes
 
 import cv2
@@ -247,6 +248,14 @@ class DesktopWallpaper:
         self._relayout.setInterval(1500)
         self._relayout.timeout.connect(self._on_screens_changed)
         self._hooked = False
+        # Vigilante: si el reproductor deja de entregar fotogramas (la tarjeta de video se reinició al
+        # actualizar el driver, volver de suspensión...) se rearma todo. Antes el fondo quedaba congelado.
+        self._ultimo_fotograma = time.monotonic()
+        self._recuperaciones = []  # cuándo se rearmó (para no entrar en bucle si el video está roto)
+        self.gpu_perdida = False   # lo pone el registro de Qt al ver «decoder pool»: se rearma en <1 s
+        self.registro = lambda texto: None  # main lo conecta a crash.log
+
+    SIN_FOTOGRAMAS = 8  # segundos reproduciendo sin recibir imagen antes de rearmar
 
     def _hook_screens(self):
         if self._hooked:
@@ -292,6 +301,9 @@ class DesktopWallpaper:
         # reparten solo a las pantallas que se ven (ver _route). Una pantalla tapada conserva su
         # ultimo fotograma y no gasta GPU en dibujar.
         self._player = self._make_player()
+        self._player.errorOccurred.connect(self._on_error)
+        self._ultimo_fotograma = time.monotonic()
+        self.gpu_perdida = False
         self._sink = QVideoSink()
         self._sink.videoFrameChanged.connect(self._on_frame)
         self._load_glitches(path)
@@ -391,6 +403,7 @@ class DesktopWallpaper:
         # bucle se ven como un destello en cada vuelta.
         if not frame.isValid():
             return
+        self._ultimo_fotograma = time.monotonic()
         t = frame.startTime()
         if t >= 0:
             for t0, t1 in self._skip:
@@ -414,6 +427,33 @@ class DesktopWallpaper:
         self._auto_paused = False
         self._apply_state()
 
+    def _on_error(self, error, texto=""):
+        if error != QMediaPlayer.Error.NoError:
+            self.registro(f"Error del reproductor ({texto or error}): se rearma el fondo")
+            QTimer.singleShot(1500, lambda: self._recuperar("error del reproductor"))
+
+    def _atascado(self):
+        """True si debería estar mostrando imagen y hace rato que no llega ninguna."""
+        if not self._player or self._paused_by_user or self._auto_paused or not self._visible:
+            return False
+        if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return False
+        return time.monotonic() - self._ultimo_fotograma > self.SIN_FOTOGRAMAS
+
+    def _recuperar(self, motivo):
+        """Rearma reproductor y pantallas desde cero. A lo sumo 3 veces cada 5 minutos: si el video en sí
+        está dañado no tiene sentido insistir sin parar."""
+        if not self._path:
+            return
+        ahora = time.monotonic()
+        self._recuperaciones = [t for t in self._recuperaciones if ahora - t < 300]
+        if len(self._recuperaciones) >= 3:
+            self._ultimo_fotograma = ahora  # se vuelve a intentar cuando pasen los 5 minutos
+            return
+        self._recuperaciones.append(ahora)
+        self.registro(f"Fondo rearmado ({motivo})")
+        self._rebuild()
+
     def _check_fullscreen(self):
         """Deja de dibujar donde no se ve: en cada pantalla tapada por una ventana maximizada se corta
         el video (las demas siguen), y si estan todas tapadas o hay una app a pantalla completa se
@@ -422,6 +462,13 @@ class DesktopWallpaper:
             self._rebuild()
             return
         if not self._videos:
+            return
+        if self.gpu_perdida:  # el decodificador perdió la tarjeta de video: rearmar antes de que se trabe
+            self.gpu_perdida = False
+            self._recuperar("la tarjeta de video se reinició")
+            return
+        if self._atascado():
+            self._recuperar(f"{self.SIN_FOTOGRAMAS} s sin fotogramas")
             return
         full = _fullscreen_app()
         visible = self._videos

@@ -1817,6 +1817,33 @@ def set_dark_title_bar(hwnd):
 
 CRASH_LOG = os.path.join(ROOT, "crash.log")
 _crash_file = None  # abierto todo el rato: faulthandler escribe en él justo cuando el proceso muere
+_al_perder_gpu = None  # lo pone main(): avisa al fondo que el decodificador perdió la tarjeta de video
+# Mensajes de Qt que delatan que la tarjeta de video se reinició (actualizar el driver, volver de suspensión):
+# el 26/11 llegaron decenas de «Unable to copy frame from decoder pool» justo antes del cierre.
+_SEÑALES_GPU = ("decoder pool", "device removed", "device_removed", "device lost")
+
+
+def registrar(texto):
+    """Anota una línea con fecha en crash.log (si está abierto)."""
+    if _crash_file:
+        import datetime
+        try:
+            _crash_file.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {texto}\n")
+        except (OSError, ValueError):
+            pass
+
+
+def reinicio_automatico():
+    """Si la copia instalada se cae igual (un error dentro del decodificador de video no se puede atrapar
+    desde Python), Windows la vuelve a abrir sola, minimizada en la bandeja. Windows solo lo hace si llevaba
+    al menos 60 s abierta, así que un cierre al arrancar no queda en bucle."""
+    if not INSTALACION.corriendo_instalada:
+        return
+    try:
+        # RESTART_NO_PATCH (4) | RESTART_NO_REBOOT (8): solo tras un cierre inesperado o un cuelgue
+        ctypes.windll.kernel32.RegisterApplicationRestart(ctypes.c_wchar_p("--minimized --tras-cierre"), 4 | 8)
+    except (OSError, AttributeError):
+        pass
 
 
 def enable_crash_log():
@@ -1858,6 +1885,9 @@ def enable_crash_log():
         if kind in levels:
             _crash_file.write(f"[{stamp()}] Qt {levels[kind]}: {message}\n")
             _crash_file.flush()
+        # puede llegar desde el hilo del decodificador: solo se levanta una bandera (la revisa el fondo)
+        if _al_perder_gpu and any(s in message.lower() for s in _SEÑALES_GPU):
+            _al_perder_gpu()
     qInstallMessageHandler(qt_messages)
     _install_native_crash_filter(stamp)
 
@@ -1973,6 +2003,12 @@ def main():
             settings["current"] = choice
             save_settings(settings)
     wallpaper = DesktopWallpaper(os.path.join(THUMBS, "glitches.json"))
+    wallpaper.registro = registrar
+    if "--tras-cierre" in sys.argv:
+        registrar("Windows reabrió GigaWalls tras un cierre inesperado (ver arriba qué pasó)")
+    global _al_perder_gpu
+    _al_perder_gpu = lambda: setattr(wallpaper, "gpu_perdida", True)  # noqa: E731
+    reinicio_automatico()
     wallpaper.all_screens = settings.get("all_screens", False)
     wallpaper.pause_when_covered = settings.get("pause_when_covered", True)
     win = MainWindow(wallpaper, settings)

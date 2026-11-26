@@ -172,6 +172,52 @@ def run(main, out_path):
         return "una después de la otra, con sus tarjetas"
     check("cola de descargas", cola_de_tareas)
 
+    def recuperacion():
+        # el fondo se rearma solo si deja de recibir imagen o si Qt avisa que el decodificador perdió la GPU
+        import time as _t
+        import desktop as d
+        from PySide6.QtCore import qCritical
+        from PySide6.QtMultimedia import QMediaPlayer
+        w = d.DesktopWallpaper()
+        rearmados = []
+
+        class Reproductor:
+            def playbackState(self):
+                return QMediaPlayer.PlaybackState.PlayingState
+        w._path, w._videos, w._visible, w._player = "prueba.mp4", [object()], [object()], Reproductor()
+        w._desktop_alive = lambda: True
+        w._rebuild = lambda: rearmados.append(_t.monotonic())
+        w.pause_when_covered = False
+        viejo_full = d._fullscreen_app
+        d._fullscreen_app = lambda: False
+        try:
+            w._ultimo_fotograma = _t.monotonic()
+            w._check_fullscreen()
+            if rearmados:
+                raise RuntimeError("se rearmó con imagen llegando bien")
+            w._ultimo_fotograma = _t.monotonic() - 30  # 30 s sin imagen
+            w._check_fullscreen()
+            if len(rearmados) != 1:
+                raise RuntimeError("no se rearmó tras 30 s sin imagen")
+            main._al_perder_gpu = lambda: setattr(w, "gpu_perdida", True)
+            qCritical("Unable to copy frame from decoder pool")  # el mensaje real del 26/11
+            if not w.gpu_perdida:
+                raise RuntimeError("el aviso de Qt no levantó la bandera")
+            w._ultimo_fotograma = _t.monotonic()
+            w._check_fullscreen()
+            if len(rearmados) != 2:
+                raise RuntimeError("no se rearmó al perder la GPU")
+            for _ in range(5):  # video roto: no insistir sin parar
+                w._ultimo_fotograma = _t.monotonic() - 30
+                w._check_fullscreen()
+            if len(rearmados) != 3:
+                raise RuntimeError(f"se rearmó {len(rearmados)} veces (máximo 3 cada 5 min)")
+        finally:
+            d._fullscreen_app = viejo_full
+            main._al_perder_gpu = None
+        return "sin imagen 8 s o GPU perdida → se rearma (máx. 3 cada 5 min)"
+    check("recuperación del fondo", recuperacion)
+
     def actualizaciones():
         # lo mismo que hace la copia instalada: consulta GitHub en un hilo (prueba también el SSL del .exe)
         from instalacion import INSTALACION, _en_hilo
