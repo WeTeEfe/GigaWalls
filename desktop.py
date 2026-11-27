@@ -173,6 +173,40 @@ def _fullscreen_app():
     return True
 
 
+# Avisos de Windows cuando una ventana cambia (SetWinEventHook). Con ellos el fondo se reanuda en el
+# momento en que se minimiza o restaura la ventana que lo tapaba, en vez de esperar a la revisión de
+# cada segundo (se veía congelado un rato al volver de una ventana maximizada al escritorio).
+_WinEventProc = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
+                                   wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+user32.SetWinEventHook.restype = wintypes.HANDLE
+user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, _WinEventProc,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+_EVENTOS_VENTANA = (
+    (0x0003, 0x0003),  # EVENT_SYSTEM_FOREGROUND: cambió la ventana activa (también Win+D)
+    (0x000B, 0x000B),  # EVENT_SYSTEM_MOVESIZEEND: terminó de arrastrar/redimensionar
+    (0x0016, 0x0017),  # EVENT_SYSTEM_MINIMIZESTART / MINIMIZEEND
+    (0x8002, 0x8003),  # EVENT_OBJECT_SHOW / HIDE: se abrió o cerró una ventana
+    (0x800B, 0x800B),  # EVENT_OBJECT_LOCATIONCHANGE: maximizar/restaurar con el botón
+)
+
+
+def _vigilar_ventanas(aviso):
+    """Llama `aviso()` cuando cambia alguna ventana principal. Devuelve lo que hay que mantener vivo."""
+    def proc(_hook, evento, hwnd, objeto, hijo, _hilo, _t):
+        # solo la ventana en sí (no el cursor ni sus controles) y solo ventanas principales
+        if objeto != 0 or hijo != 0 or not hwnd:
+            return
+        if evento in (0x8002, 0x8003, 0x800B) and user32.GetAncestor(hwnd, 2) != hwnd:  # GA_ROOT
+            return
+        aviso()
+    callback = _WinEventProc(proc)
+    # WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS: llegan por la cola de mensajes del hilo principal
+    hooks = [user32.SetWinEventHook(a, b, None, callback, 0, 0, 0x0000 | 0x0002) for a, b in _EVENTOS_VENTANA]
+    return callback, hooks
+
+
 def _class_name(hwnd):
     buf = ctypes.create_unicode_buffer(256)
     user32.GetClassNameW(hwnd, buf, 256)
@@ -248,6 +282,15 @@ class DesktopWallpaper:
         self._relayout.setInterval(1500)
         self._relayout.timeout.connect(self._on_screens_changed)
         self._hooked = False
+        # Revisión inmediata al cambiar una ventana: a los 80 ms y otra vez a los 450 ms (la animación de
+        # minimizar/restaurar tarda; la segunda ve el estado final). Arrastrar una ventana manda decenas
+        # de avisos: mientras el temporizador está en marcha no se reinicia, así se revisa a lo sumo cada 80 ms.
+        self._pronto, self._final = QTimer(), QTimer()
+        for t, ms in ((self._pronto, 80), (self._final, 450)):
+            t.setSingleShot(True)
+            t.setInterval(ms)
+            t.timeout.connect(self._check_fullscreen)
+        self._vigia = None
         # Vigilante: si el reproductor deja de entregar fotogramas (la tarjeta de video se reinició al
         # actualizar el driver, volver de suspensión...) se rearma todo. Antes el fondo quedaba congelado.
         self._ultimo_fotograma = time.monotonic()
@@ -264,6 +307,14 @@ class DesktopWallpaper:
         app = QApplication.instance()
         for signal in (app.screenAdded, app.screenRemoved, app.primaryScreenChanged):
             signal.connect(lambda *_: self._relayout.start())
+        self._vigia = _vigilar_ventanas(self._ventana_cambio)
+
+    def _ventana_cambio(self):
+        if not self._videos:
+            return
+        if not self._pronto.isActive():
+            self._pronto.start()
+        self._final.start()
 
     def _on_screens_changed(self):
         if self._path:

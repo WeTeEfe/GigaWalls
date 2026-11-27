@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.9 — 27/11/2026
+- Usa unos 225 MB menos de memoria: una librería de cálculo que viene incluida reservaba memoria por cada núcleo del procesador sin necesitarla.
+- Al minimizar o restaurar una ventana maximizada, el fondo vuelve a moverse al instante (antes se quedaba quieto hasta un segundo).
+
 ## 1.2.8 — 27/11/2026
 - Si una copia de GigaWalls quedó trabada y no deja reemplazar sus archivos, el instalador deja la versión anterior intacta y pide reiniciar la PC, en vez de dejarla a medio actualizar.
 

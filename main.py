@@ -15,6 +15,10 @@ from itertools import zip_longest
 # y el fondo deja de dibujarse: pantallas negras o congeladas aunque el video se siga decodificando
 # (19/11). Con esto Qt usa un temporizador normal. Tiene que estar antes de crear la QApplication.
 os.environ.setdefault("QT_D3D_NO_VBLANK_THREAD", "1")
+# OpenBLAS (viene con numpy, que carga OpenCV) reserva un búfer por cada núcleo del procesador al
+# importarse: +238 MB en una PC de 8 núcleos, más en una con más. GigaWalls no hace cálculo de matrices
+# (numpy solo revisa fotogramas en glitches.py), así que con un hilo basta. Debe ir antes de importar cv2.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 import cv2
 from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl, Signal
