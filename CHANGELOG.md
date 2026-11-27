@@ -3,6 +3,10 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.3.0 — 27/11/2026
+- La biblioteca muestra la calidad de cada video: «Ahorro · 720p», «Full · 1080p» o «Pesado» (más de lo necesario). Al pasar el ratón se ve el detalle (resolución, fps y bitrate).
+- Nuevo en Biblioteca → Herramientas: «Pasar toda la biblioteca a 720p» (con el modo ahorro) u «Optimizar toda la biblioteca» (sin él), en vez de ir video por video.
+
 ## 1.2.9 — 27/11/2026
 - Usa unos 225 MB menos de memoria: una librería de cálculo que viene incluida reservaba memoria por cada núcleo del procesador sin necesitarla.
 - Al minimizar o restaurar una ventana maximizada, el fondo vuelve a moverse al instante (antes se quedaba quieto hasta un segundo).

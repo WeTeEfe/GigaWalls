@@ -395,6 +395,53 @@ def make_thumb(video_path):
     return thumb if os.path.exists(thumb) else None
 
 
+_CALIDADES = None  # ruta -> [tamaño, fecha, alto, fps, Mbps]; se guarda junto a las miniaturas
+
+
+def calidad_video(path):
+    """(texto, color, detalle) de la viñeta de calidad en la biblioteca: el modo ahorro solo decide
+    cómo se guardan los videos nuevos, así que en la biblioteca conviven 720p y 1080p y no se sabía
+    cuál era cuál. Se lee una vez por archivo; si se optimiza, cambian tamaño y fecha y se vuelve a leer."""
+    global _CALIDADES
+    archivo = os.path.join(THUMBS, "calidades.json")
+    if _CALIDADES is None:
+        try:
+            with open(archivo, encoding="utf-8") as f:
+                _CALIDADES = json.load(f)
+        except (OSError, ValueError):
+            _CALIDADES = {}
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    dato = _CALIDADES.get(path)
+    if not dato or dato[:2] != [st.st_size, int(st.st_mtime)]:
+        cap = cv2.VideoCapture(path)
+        alto, fps, cuadros = cap.get(cv2.CAP_PROP_FRAME_HEIGHT), cap.get(cv2.CAP_PROP_FPS), cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        cap.release()
+        if not alto:
+            return None
+        mbps = st.st_size * 8 / (cuadros / fps) / 1e6 if fps and cuadros else 0
+        dato = _CALIDADES[path] = [st.st_size, int(st.st_mtime), int(alto), round(fps), round(mbps, 1)]
+        try:
+            os.makedirs(THUMBS, exist_ok=True)
+            with open(archivo, "w", encoding="utf-8") as f:
+                json.dump(_CALIDADES, f)
+        except OSError:
+            pass
+    _t, _f, alto, fps, mbps = dato
+    detalle = f"{alto}p · {fps} fps · {mbps:g} Mbps"
+
+    def cabe(perfil):
+        max_h, max_fps, max_mbps, _crf = perfil
+        return alto <= max_h and fps <= max_fps + 1 and mbps <= max_mbps
+    if cabe(optimize.ECO):
+        return f"Ahorro · {alto}p", "#1f9e68", detalle + " — perfil ahorro (720p/24)"
+    if cabe(optimize.NORMAL):
+        return f"Full · {alto}p", "#2a8ee6", detalle + " — perfil normal (1080p/30)"
+    return f"Pesado · {alto}p", "#e07b1f", detalle + " — supera los perfiles: se optimiza al ponerlo de fondo"
+
+
 def fetch_preview(info):
     """Descarga (o reutiliza de la caché temporal) la vista previa y devuelve su ruta local."""
     source = SOURCES[info["source"]]
@@ -716,7 +763,8 @@ class MainWindow(QMainWindow):
         self.eco.setChecked(self.settings.get("eco", False))
         self.eco.setToolTip("Al descargar, importar u optimizar, deja los videos en 720p y 24 fps: "
                             "gasta ~20 % menos GPU (medido) y pesa 3 veces menos.\n"
-                            "No cambia los videos que ya tienes; usa 'Optimizar' en la biblioteca.")
+                            "No cambia los videos que ya tienes: para pasarlos, usa Biblioteca → Herramientas → "
+                            "'Pasar toda la biblioteca a 720p'. Cada video muestra su calidad en la biblioteca.")
         self.eco.toggled.connect(self._set_eco)
         lay.addWidget(self.eco)
         self.autostart = QCheckBox("Abrir al encender la PC")
@@ -1227,6 +1275,31 @@ class MainWindow(QMainWindow):
 
         self._encolar(tarea, arrancar)
 
+    def optimize_library(self):
+        """Convierte de una vez todos los videos que superan el perfil elegido (en vez de uno por uno).
+        Con el modo ahorro, todo lo que no sea «Ahorro» pasa a 720p/24; sin él, solo los «Pesado» bajan
+        a 1080p/30 (un 720p no se sube: no ganaría calidad)."""
+        eco = self.settings.get("eco", False)
+        bien = ("Ahorro",) if eco else ("Ahorro", "Full")
+        pendientes = []
+        for p in library.videos(LIBRARY):
+            calidad = calidad_video(p)
+            if calidad and not calidad[0].startswith(bien):
+                pendientes.append(p)
+        perfil = "720p/24 (modo ahorro)" if eco else "1080p/30"
+        if not pendientes:
+            _caja(QMessageBox.Information, "Biblioteca", "Ya está todo optimizado",
+                  f"Todos tus videos cumplen el perfil {perfil}.", [("Entendido", QMessageBox.AcceptRole)])
+            return
+        texto = (f"Se convertirán {len(pendientes)} videos a {perfil}, uno después del otro y en segundo plano. "
+                 "Se reemplazan los archivos originales" + (": pesan menos y gastan menos GPU, con algo menos de nitidez."
+                                                           if eco else " por versiones más livianas."))
+        if _caja(QMessageBox.Question, "Optimizar biblioteca", f"Convertir {len(pendientes)} videos", texto,
+                 [("Convertir", QMessageBox.AcceptRole), ("Cancelar", QMessageBox.RejectRole)]) != "Convertir":
+            return
+        for p in pendientes:
+            self.optimize_wallpaper(p)
+
     def optimize_wallpaper(self, path):
         tarea = Tarea(library.display_name(path), ["Optimizar"], clave=path, miniatura=self._miniatura_video(path))
         eco = self.settings.get("eco", False)
@@ -1281,6 +1354,10 @@ class MainWindow(QMainWindow):
         menu.addAction("Abrir carpeta", lambda: (os.makedirs(LIBRARY, exist_ok=True), os.startfile(LIBRARY)))
         menu.addAction("Optimizar el seleccionado (ahorra GPU)",
                        lambda: self._lib_action(self.optimize_wallpaper))
+        todos = menu.addAction("", self.optimize_library)
+        menu.aboutToShow.connect(lambda: todos.setText(
+            "Pasar toda la biblioteca a 720p (modo ahorro)..." if self.settings.get("eco", False)
+            else "Optimizar toda la biblioteca (1080p/30)..."))
         menu.addAction("Importar videos...", self._pick_files_to_import)
         menu.addSeparator()
         menu.addAction("Limpiar reflejados y duplicados...", self.clean_library)
@@ -1319,8 +1396,14 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, path)
             item.setSizeHint(self.library.gridSize())
             thumb = make_thumb(path)
+            calidad = calidad_video(path)
             if thumb:
-                item.setIcon(QIcon(rounded(QPixmap(thumb))))
+                imagen = QPixmap(thumb)
+                if calidad:
+                    imagen = badge(imagen, calidad[0], calidad[1])
+                item.setIcon(QIcon(rounded(imagen)))
+            if calidad:
+                item.setToolTip(calidad[2])
             self.library.addItem(item)
             if path == previous:
                 self.library.setCurrentItem(item)

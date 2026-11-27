@@ -152,8 +152,8 @@ BADGE_COLORS = {"MoeWalls": "#e0508a", "DesktopHut": "#2a8ee6", "MotionBGS": "#e
                 "LiveWallpapers4Free": "#1f9e68"}
 
 
-def badge(pixmap, text):
-    """Dibuja una etiqueta con el nombre del origen en la esquina superior izquierda."""
+def badge(pixmap, text, color=None):
+    """Dibuja una etiqueta (el nombre del origen, o la calidad del video) en la esquina superior izquierda."""
     out = QPixmap(pixmap)
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing)
@@ -164,7 +164,7 @@ def badge(pixmap, text):
     w = p.fontMetrics().horizontalAdvance(text) + 16
     rect = QRectF(8, 8, w, 20)
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(BADGE_COLORS.get(text, "#7c5cff")))
+    p.setBrush(QColor(color or BADGE_COLORS.get(text, "#7c5cff")))
     p.drawRoundedRect(rect, 10, 10)
     p.setPen(QColor("white"))
     p.drawText(rect, Qt.AlignCenter, text)
