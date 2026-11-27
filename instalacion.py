@@ -419,28 +419,47 @@ class Instalacion:
                     raise
                 time.sleep(0.3)
 
-    def _quitar(self, ruta, viejo):
-        """Borra un archivo o carpeta del programa. Si un proceso trabado lo tiene abierto y no se deja
-        cerrar (visto el 26/11: una copia colgada que ni taskkill mataba) Windows no deja borrarlo, pero sí
-        renombrarlo: lo bloqueado se mueve a `viejo` y se borra en la próxima instalación."""
+    class Trabado(OSError):
+        """Un archivo del programa sigue abierto por un proceso que Windows no deja cerrar."""
+
+    def _apartar(self, rutas, viejo):
+        """Mueve a `viejo` todo lo que se va a reemplazar, sin borrar nada todavía. Mover funciona
+        aunque el archivo esté en uso como programa (un .exe o .dll cargado), pero no si un proceso
+        trabado lo tiene abierto (visto el 26/11: una copia colgada que ni taskkill cerraba, con
+        base_library.zip abierto). En ese caso devuelve todo a su lugar y avisa: es mejor dejar la
+        versión anterior funcionando que una mezcla de archivos de dos versiones."""
+        movidos = []  # (origen, destino)
+
+        def mover(origen, destino):
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            self._reintentar(lambda: os.replace(origen, destino), 4)
+            movidos.append((origen, destino))
         try:
-            self._reintentar(lambda: shutil.rmtree(ruta) if os.path.isdir(ruta) else os.remove(ruta), 4)
-            return
-        except OSError:
-            pass
-        os.makedirs(viejo, exist_ok=True)
-        if not os.path.isdir(ruta):
-            os.replace(ruta, os.path.join(viejo, f"{time.time_ns()}_{os.path.basename(ruta)}"))
-            return
-        # Una carpeta con archivos abiertos no se puede renombrar entera: se apartan uno por uno.
-        for raiz, _carpetas, archivos in os.walk(ruta):
-            for a in archivos:
-                p = os.path.join(raiz, a)
+            for ruta in rutas:
+                destino = os.path.join(viejo, os.path.basename(ruta))
                 try:
-                    os.remove(p)
+                    mover(ruta, destino)  # lo normal: la carpeta entera de una vez
+                    continue
                 except OSError:
-                    os.replace(p, os.path.join(viejo, f"{time.time_ns()}_{a}"))
-        shutil.rmtree(ruta)
+                    if not os.path.isdir(ruta):
+                        raise
+                # Una carpeta con algún archivo abierto no se mueve entera: se mueven sus archivos uno a uno
+                for raiz, _c, archivos in os.walk(ruta):
+                    for a in archivos:
+                        o = os.path.join(raiz, a)
+                        mover(o, os.path.join(destino, os.path.relpath(o, ruta)))
+                shutil.rmtree(ruta, ignore_errors=True)  # quedan solo subcarpetas vacías
+        except OSError as e:
+            for origen, destino in reversed(movidos):
+                try:
+                    os.makedirs(os.path.dirname(origen), exist_ok=True)
+                    os.replace(destino, origen)
+                except OSError:
+                    pass
+            raise self.Trabado(
+                f"Una copia de {self.titulo} quedó trabada y Windows no deja reemplazar sus archivos. "
+                f"Reinicia la PC y vuelve a abrir el instalador; tu versión actual sigue intacta.\n\n"
+                f"Detalle: {e}") from e
 
     def _instalar_carpeta(self):
         """Modo carpeta: reemplaza solo los archivos del programa (los que trae app.zip: el .exe y _internal)."""
@@ -448,21 +467,24 @@ class Instalacion:
         temporal = os.path.join(self.carpeta, "_nuevo")
         viejo = os.path.join(self.carpeta, "_viejo")
         shutil.rmtree(temporal, ignore_errors=True)
-        shutil.rmtree(viejo, ignore_errors=True)  # lo apartado la vez anterior (lo que siga en uso, queda)
+        shutil.rmtree(viejo, ignore_errors=True)  # lo apartado la vez anterior
         with zipfile.ZipFile(self._zip) as z:
             z.extractall(temporal)
         nuevos = os.listdir(temporal)
         if self.exe_nombre not in nuevos:
             raise RuntimeError(f"El paquete no trae {self.exe_nombre}.")
         protegidos = {n.lower() for n in (*self.datos, "version_vista.txt", "_nuevo", "_viejo")}
+        nuevos = [n for n in nuevos if n.lower() not in protegidos]  # nunca pisar ajustes del usuario
+        try:
+            self._apartar([os.path.join(self.carpeta, n) for n in nuevos
+                           if os.path.lexists(os.path.join(self.carpeta, n))], viejo)
+        except OSError:
+            shutil.rmtree(temporal, ignore_errors=True)
+            raise
         for nombre in nuevos:
-            if nombre.lower() in protegidos:  # nunca pisar ajustes del usuario
-                continue
-            destino = os.path.join(self.carpeta, nombre)
-            if os.path.lexists(destino):
-                self._quitar(destino, viejo)
-            self._reintentar(lambda n=nombre, d=destino: os.replace(os.path.join(temporal, n), d))
+            self._reintentar(lambda n=nombre: os.replace(os.path.join(temporal, n), os.path.join(self.carpeta, n)))
         shutil.rmtree(temporal, ignore_errors=True)
+        shutil.rmtree(viejo, ignore_errors=True)  # lo que siga en uso queda para la próxima
 
     def instalar(self):
         origen = self.ruta_actual
@@ -482,7 +504,7 @@ class Instalacion:
             viejo = os.path.join(self.carpeta, "_viejo")
             shutil.rmtree(viejo, ignore_errors=True)
             if os.path.exists(self.exe):
-                self._quitar(self.exe, viejo)
+                self._apartar([self.exe], viejo)
             self._reintentar(lambda: shutil.copy2(origen, self.exe))
         for nombre in self.datos:  # lleva los ajustes del .exe portable, sin pisar los ya instalados
             src, dst = os.path.join(os.path.dirname(origen), nombre), os.path.join(self.carpeta, nombre)
@@ -897,7 +919,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.2.7",
+    version="1.2.8",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",
