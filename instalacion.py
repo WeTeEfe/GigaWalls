@@ -419,25 +419,48 @@ class Instalacion:
                     raise
                 time.sleep(0.3)
 
+    def _quitar(self, ruta, viejo):
+        """Borra un archivo o carpeta del programa. Si un proceso trabado lo tiene abierto y no se deja
+        cerrar (visto el 26/11: una copia colgada que ni taskkill mataba) Windows no deja borrarlo, pero sí
+        renombrarlo: lo bloqueado se mueve a `viejo` y se borra en la próxima instalación."""
+        try:
+            self._reintentar(lambda: shutil.rmtree(ruta) if os.path.isdir(ruta) else os.remove(ruta), 4)
+            return
+        except OSError:
+            pass
+        os.makedirs(viejo, exist_ok=True)
+        if not os.path.isdir(ruta):
+            os.replace(ruta, os.path.join(viejo, f"{time.time_ns()}_{os.path.basename(ruta)}"))
+            return
+        # Una carpeta con archivos abiertos no se puede renombrar entera: se apartan uno por uno.
+        for raiz, _carpetas, archivos in os.walk(ruta):
+            for a in archivos:
+                p = os.path.join(raiz, a)
+                try:
+                    os.remove(p)
+                except OSError:
+                    os.replace(p, os.path.join(viejo, f"{time.time_ns()}_{a}"))
+        shutil.rmtree(ruta)
+
     def _instalar_carpeta(self):
         """Modo carpeta: reemplaza solo los archivos del programa (los que trae app.zip: el .exe y _internal)."""
         import zipfile
         temporal = os.path.join(self.carpeta, "_nuevo")
+        viejo = os.path.join(self.carpeta, "_viejo")
         shutil.rmtree(temporal, ignore_errors=True)
+        shutil.rmtree(viejo, ignore_errors=True)  # lo apartado la vez anterior (lo que siga en uso, queda)
         with zipfile.ZipFile(self._zip) as z:
             z.extractall(temporal)
         nuevos = os.listdir(temporal)
         if self.exe_nombre not in nuevos:
             raise RuntimeError(f"El paquete no trae {self.exe_nombre}.")
-        protegidos = {n.lower() for n in (*self.datos, "version_vista.txt", "_nuevo")}
+        protegidos = {n.lower() for n in (*self.datos, "version_vista.txt", "_nuevo", "_viejo")}
         for nombre in nuevos:
             if nombre.lower() in protegidos:  # nunca pisar ajustes del usuario
                 continue
             destino = os.path.join(self.carpeta, nombre)
-            if os.path.isdir(destino):
-                self._reintentar(lambda d=destino: shutil.rmtree(d))
-            elif os.path.exists(destino):
-                self._reintentar(lambda d=destino: os.remove(d))
+            if os.path.lexists(destino):
+                self._quitar(destino, viejo)
             self._reintentar(lambda n=nombre, d=destino: os.replace(os.path.join(temporal, n), d))
         shutil.rmtree(temporal, ignore_errors=True)
 
@@ -456,6 +479,10 @@ class Instalacion:
         if self._zip:
             self._instalar_carpeta()
         else:
+            viejo = os.path.join(self.carpeta, "_viejo")
+            shutil.rmtree(viejo, ignore_errors=True)
+            if os.path.exists(self.exe):
+                self._quitar(self.exe, viejo)
             self._reintentar(lambda: shutil.copy2(origen, self.exe))
         for nombre in self.datos:  # lleva los ajustes del .exe portable, sin pisar los ya instalados
             src, dst = os.path.join(os.path.dirname(origen), nombre), os.path.join(self.carpeta, nombre)
@@ -870,7 +897,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.2.6",
+    version="1.2.7",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",

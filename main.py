@@ -1957,11 +1957,36 @@ def clean_temp_conversions():
         pass
 
 
+def recolectar_en_hilo_principal(app):
+    """El recolector de basura de Python se dispara en el hilo que esté reservando memoria en ese
+    momento. Si es un hilo de fondo (buscar, descargar, consultar GitHub) y entre la basura hay objetos
+    de Qt, Qt los destruye fuera de su hilo y el programa se cierra con «access violation» (visto el
+    26/11 en la prueba de la 1.2.7: «Garbage-collecting» dentro de ssl.create_default_context). Se apaga
+    la recolección automática y se hace aquí, siempre en el hilo principal."""
+    import gc
+    gc.disable()
+    umbral = gc.get_threshold()[0] or 700
+    ciclo = {"n": 0}
+
+    def recolectar():
+        ciclo["n"] += 1
+        if ciclo["n"] % 300 == 0:          # cada 5 min, una pasada completa
+            gc.collect()
+        elif ciclo["n"] % 10 == 0:         # cada 10 s, las generaciones jóvenes
+            gc.collect(1)
+        elif gc.get_count()[0] > umbral:   # y si se acumuló mucho de golpe, ya
+            gc.collect(0)
+    app._reloj_gc = QTimer()
+    app._reloj_gc.timeout.connect(recolectar)
+    app._reloj_gc.start(1000)
+
+
 def main():
     # Sin esto Windows agrupa la ventana bajo python(w).exe y muestra su icono en la barra de tareas
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     enable_crash_log()
     app = QApplication(sys.argv)
+    recolectar_en_hilo_principal(app)
     if "--selftest" in sys.argv:
         args = sys.argv[sys.argv.index("--selftest") + 1:]
         sys.exit(selftest(args[0], args[1] if len(args) > 1 else None))
