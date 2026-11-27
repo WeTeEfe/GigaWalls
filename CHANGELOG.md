@@ -3,6 +3,9 @@
 <!-- Lo lee instalacion.py (va dentro del .exe): «## versión — fecha» y debajo una línea «- cambio» por cada cambio,
      la más nueva arriba. release.py no publica si falta la sección de la versión nueva. -->
 
+## 1.2.6 — 26/11/2026
+- «Buscar actualizaciones» ya funciona en PCs con los certificados de Windows desactualizados (antes salía «CERTIFICATE_VERIFY_FAILED»).
+
 ## 1.2.5 — 26/11/2026
 - El fondo se recupera solo si la tarjeta de video se reinicia (al actualizar el driver o volver de suspensión): si deja de llegar imagen, se vuelve a armar en segundos en vez de quedarse congelado.
 - Si GigaWalls llegara a cerrarse de golpe, Windows lo vuelve a abrir solo, minimizado junto al reloj.

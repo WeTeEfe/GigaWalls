@@ -234,11 +234,25 @@ def _en_hilo(fn, listo, progreso=None):
     threading.Thread(target=correr, daemon=True).start()
 
 
+def _contexto_ssl():
+    """Certificados de Windows + los de certifi. Solo con los de Windows falla en PCs cuyo almacén
+    de raíces está desactualizado («CERTIFICATE_VERIFY_FAILED: unable to get local issuer
+    certificate», visto el 26/11 en otra PC con 1.1.9): Python no descarga raíces como hace Edge."""
+    import ssl
+    ctx = ssl.create_default_context()  # ya trae las raíces de Windows
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except (ImportError, OSError, ssl.SSLError):
+        pass
+    return ctx
+
+
 def _pedir_github(url, timeout=20):
     import urllib.request
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
                                                "User-Agent": "GigaTech-actualizador"})
-    return urllib.request.urlopen(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout, context=_contexto_ssl())
 
 
 class Instalacion:
@@ -856,7 +870,7 @@ INSTALACION = Instalacion(
     exe="GigaWalls.exe",
     clave="GigaTechGigaWalls",
     valor_run="AnimeWalls",          # nombre histórico del valor de arranque: se conserva
-    version="1.2.5",
+    version="1.2.6",
     descripcion="Fondos de escritorio animados · GigaTech",
     datos=("settings.json",),
     acento="#7c5cff",
